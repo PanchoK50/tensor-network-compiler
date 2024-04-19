@@ -1,15 +1,11 @@
 # tensor-network-compiler
 
 ## Currently working on
-- Data Type for Dummy Tensors (Tensors with given Rank and Shape, no values)
-- First Hello World Program
+- Data Type for Dummy Tensors (Tensors with given Rank and Shape, no values).
 
 ## TODO:
-- CMakeLists.txt
-- Operations for: 
-    - Tensor Contraction
-    - Tensor Reshaping
-    - Tensor Splitting
+- Data Type for Tensor Network.
+- Operations for Tensors (Contraction of tensors and subsequent addition of result to tensor network).
 
 ## Instalation:
 - First install and build llvm. This will come with MLIR.
@@ -19,6 +15,9 @@
     set(MLIR_DIR "../llvm-project/build/lib/cmake/mlir")
     set(LLVM_DIR "../llvm-project/build/lib/cmake/llvm")
 ```
+
+## Current Features:
+- Generate C++ files from TableGen.
 
 ## Usage:
 - Create a build directory
