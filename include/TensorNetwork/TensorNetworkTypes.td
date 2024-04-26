@@ -9,9 +9,9 @@ class TensorNetwork_Type<string name, string typeMnemonic, list<Trait> traits = 
   let mnemonic = typeMnemonic;
 }
 
-def TensorNetwork_DummyTensor_Type : TensorNetwork_Type<"DummyTensor", "dummy_tensor"> {
+def DummyTensorType: TensorNetwork_Type<"DummyTensor", "dummy_tensor"> {
     let summary = "A dummy tensor used to optimize tensor network contraction operations";
-    let description = "//TODO";
+    let description = "The Dummy Tensor is for testing purposes right now. The purpose of it is to store shape and rank";
 }
 
 #endif // TENSOR_NETWORK_TYPES

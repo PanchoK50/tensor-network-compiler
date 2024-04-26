@@ -8,6 +8,7 @@ using namespace mlir::tensor_network;
 
 #include "TensorNetwork/TensorNetworkOpsDialect.cpp.inc"
 
+//This instance will be owned by the context. (Toy Tutorial)
 void mlir::tensor_network::TensorNetworkDialect::initialize() {
     addOperations<
     #define GET_OP_LIST
@@ -15,3 +16,8 @@ void mlir::tensor_network::TensorNetworkDialect::initialize() {
     >();
     registerTypes();
 }
+
+//TENSOR NETWORK OPERATIONS
+
+
+

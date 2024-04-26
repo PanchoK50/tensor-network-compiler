@@ -45,6 +45,14 @@ include_directories(${MLIR_INCLUDE_DIRS})
 include_directories(${TENSORNETWORK_SOURCE_DIR}/include)
 include_directories(${TENSORNETWORK_BINARY_DIR}/include)
 
+# add_library(tensor_network_include_dirs INTERFACE)
+# target_include_directories(
+#     ${LLVM_INCLUDE_DIRS}
+#     ${MLIR_INCLUDE_DIRS}
+#     ${TENSORNETWORK_SOURCE_DIR}/include
+#     ${TENSORNETWORK_BINARY_DIR}/include
+# )
+
 
 add_subdirectory(include)
 add_subdirectory(lib)

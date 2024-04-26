@@ -16,3 +16,7 @@ void TensorNetworkDialect::registerTypes() {
 #include "TensorNetwork/TensorNetworkOpsTypes.cpp.inc"
     >();
 }
+
+
+
+
