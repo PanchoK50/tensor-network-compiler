@@ -26,4 +26,5 @@ target_link_libraries(test_tensor_network
 target_sources(test_tensor_network PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lib/TensorNetwork/TensorNetworkDialect.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lib/TensorNetwork/TensorNetworkOps.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lib/TensorNetwork/TensorNetworkTypes.cpp)
 
 set_target_properties(test_tensor_network PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_subdirectory(generate_mlir_ir)
 
