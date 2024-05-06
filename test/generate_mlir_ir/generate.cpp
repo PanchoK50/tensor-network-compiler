@@ -43,29 +43,19 @@ void createDummyTensorNetwork(MLIRContext* ctx) {
     }
 
     // Print all the tensors right now:
-    for (auto tensor : tensors) {
-        std::cout << "Tensor: " << tensor << std::endl;
-    }
+    // for (auto tensor : tensors) {
+    //     std::cout << "Tensor: " << tensor << std::endl;
+    // }
 
     for (size_t i = 0; i < tensors.size() - 1; i++) {
         auto lhs = tensors[i];
         auto rhs = tensors[i + 1];
-        std::cout << "Contraction between " << lhs << " and " << rhs << std::endl;
-        llvm::ArrayRef<Value> contractedIndices = {0, 1};  // contract on the first dimension
-        // auto edge = builder.create<::mlir::tensor_network::ContractionEdgeOp>(UnknownLoc::get(ctx), lhs.getResult(), rhs.getResult(), contractedIndices);
-        //Print all values for build in order to check for bugs :(
-        // std::cout << "lhs: " << lhs.getResult() << std::endl;
-        // std::cout << "rhs: " << rhs.getResult() << std::endl;
-
-        // auto lhs_value = lhs.getResult().getDefiningOp()->getAttr("value").cast<DenseElementsAttr>();
-        // auto rhs_value = rhs.getResult().getDefiningOp()->getAttr("value").cast<DenseElementsAttr>();
-
+        // std::cout << "Contraction between " << lhs << " and " << rhs << std::endl;
         Location loc = UnknownLoc::get(ctx);
-
         // The result type should be the result of the contraction
         auto resultType = RankedTensorType::get({2, 2}, builder.getF64Type()); //TODO Correct the shape
-
-        auto edge = builder.create<::mlir::tensor_network::ContractionEdgeOp>(loc, resultType, lhs.getResult(), rhs.getResult());
+        auto contractionIndices = builder.getI64ArrayAttr({0, 1});
+        auto edge = builder.create<::mlir::tensor_network::ContractionEdgeOp>(loc, resultType, lhs.getResult(), rhs.getResult(), contractionIndices);
         module.push_back(edge);
     }
 

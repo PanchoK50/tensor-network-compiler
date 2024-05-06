@@ -66,25 +66,24 @@ def ContractionEdgeOp : TensorNetwork_Op<"contraction_edge"> {
     }];
 
     // let arguments = (ins AnyTensor:$lhs, AnyTensor:$rhs, ArrayAttr:$contracted_indices);
-    let arguments = (ins AnyTensor:$lhs, AnyTensor:$rhs);
+    // let arguments = (ins AnyTensor:$lhs, AnyTensor:$rhs);
+    // let results = (outs AnyTensor:$result);
+    // let builders = [
+    //     OpBuilder<(ins "Value":$lhs, "Value":$rhs), [{
+    //         build($_builder, $_state, lhs, rhs);
+    //     }]>,
+    // ];
+
+    let arguments = (ins AnyTensor:$lhs, AnyTensor:$rhs, ArrayAttr:$contracted_indices);
     let results = (outs AnyTensor:$result);
     let builders = [
-        // OpBuilder<(ins "mlir::tensor_network::TensorOp":$lhs, "mlir::tensor_network::TensorOp":$rhs, "ArrayAttr":$contracted_indices), [{
-        //     build($_builder, $_state, lhs, rhs, contracted_indices);
-        // }]>,
-        // OpBuilder<(ins "Value":$lhs, "Value":$rhs, "ArrayRef<Value>":$contracted_indices), [{
-        //     build($_builder, $_state, lhs, rhs, contracted_indices);
-        // }]>,
-        OpBuilder<(ins "Value":$lhs, "Value":$rhs), [{
-            build($_builder, $_state, lhs, rhs);
+        OpBuilder<(ins "Value":$lhs, "Value":$rhs, "ArrayAttr":$contracted_indices), [{
+            build($_builder, $_state, lhs, rhs, contracted_indices);
         }]>,
-        // OpBuilder<(ins "Value":$lhs, "Value":$rhs), [{
-        //     build($_builder, $_state, lhs, rhs);
-        // }]>,
-        // OpBuilder<(ins "DenseElementsAttr":$lhs, "DenseElementsAttr":$rhs), [{
-        //     build($_builder, $_state, lhs, rhs);
-        // }]>,
     ];
+
+    // let assemblyFormat = "$lhs $rhs attr-dict type($lhs) `,` type($rhs) `to` type($result)";
+    let assemblyFormat = "attr-dict  $lhs `:` type($lhs)  `with`  $rhs `:` type($rhs) `to` type($result)";
 }
 
 

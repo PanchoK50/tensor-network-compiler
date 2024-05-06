@@ -9,13 +9,13 @@ module {
   %7 = "tensor_network.tensor"() <{value = dense<[[1.000000e+00, 2.000000e+00], [3.000000e+00, 4.000000e+00]]> : tensor<2x2xf64>}> : () -> tensor<2x2xf64>
   %8 = "tensor_network.tensor"() <{value = dense<[[1.000000e+00, 2.000000e+00], [3.000000e+00, 4.000000e+00]]> : tensor<2x2xf64>}> : () -> tensor<2x2xf64>
   %9 = "tensor_network.tensor"() <{value = dense<[[1.000000e+00, 2.000000e+00], [3.000000e+00, 4.000000e+00]]> : tensor<2x2xf64>}> : () -> tensor<2x2xf64>
-  %10 = "tensor_network.contraction_edge"(%0, %1) : (tensor<2x2xf64>, tensor<2x2xf64>) -> tensor<2x2xf64>
-  %11 = "tensor_network.contraction_edge"(%1, %2) : (tensor<2x2xf64>, tensor<2x2xf64>) -> tensor<2x2xf64>
-  %12 = "tensor_network.contraction_edge"(%2, %3) : (tensor<2x2xf64>, tensor<2x2xf64>) -> tensor<2x2xf64>
-  %13 = "tensor_network.contraction_edge"(%3, %4) : (tensor<2x2xf64>, tensor<2x2xf64>) -> tensor<2x2xf64>
-  %14 = "tensor_network.contraction_edge"(%4, %5) : (tensor<2x2xf64>, tensor<2x2xf64>) -> tensor<2x2xf64>
-  %15 = "tensor_network.contraction_edge"(%5, %6) : (tensor<2x2xf64>, tensor<2x2xf64>) -> tensor<2x2xf64>
-  %16 = "tensor_network.contraction_edge"(%6, %7) : (tensor<2x2xf64>, tensor<2x2xf64>) -> tensor<2x2xf64>
-  %17 = "tensor_network.contraction_edge"(%7, %8) : (tensor<2x2xf64>, tensor<2x2xf64>) -> tensor<2x2xf64>
-  %18 = "tensor_network.contraction_edge"(%8, %9) : (tensor<2x2xf64>, tensor<2x2xf64>) -> tensor<2x2xf64>
+  %10 = tensor_network.contraction_edge {contracted_indices = [0, 1]} %0 : tensor<2x2xf64> with %1 : tensor<2x2xf64> to tensor<2x2xf64>
+  %11 = tensor_network.contraction_edge {contracted_indices = [0, 1]} %1 : tensor<2x2xf64> with %2 : tensor<2x2xf64> to tensor<2x2xf64>
+  %12 = tensor_network.contraction_edge {contracted_indices = [0, 1]} %2 : tensor<2x2xf64> with %3 : tensor<2x2xf64> to tensor<2x2xf64>
+  %13 = tensor_network.contraction_edge {contracted_indices = [0, 1]} %3 : tensor<2x2xf64> with %4 : tensor<2x2xf64> to tensor<2x2xf64>
+  %14 = tensor_network.contraction_edge {contracted_indices = [0, 1]} %4 : tensor<2x2xf64> with %5 : tensor<2x2xf64> to tensor<2x2xf64>
+  %15 = tensor_network.contraction_edge {contracted_indices = [0, 1]} %5 : tensor<2x2xf64> with %6 : tensor<2x2xf64> to tensor<2x2xf64>
+  %16 = tensor_network.contraction_edge {contracted_indices = [0, 1]} %6 : tensor<2x2xf64> with %7 : tensor<2x2xf64> to tensor<2x2xf64>
+  %17 = tensor_network.contraction_edge {contracted_indices = [0, 1]} %7 : tensor<2x2xf64> with %8 : tensor<2x2xf64> to tensor<2x2xf64>
+  %18 = tensor_network.contraction_edge {contracted_indices = [0, 1]} %8 : tensor<2x2xf64> with %9 : tensor<2x2xf64> to tensor<2x2xf64>
 }

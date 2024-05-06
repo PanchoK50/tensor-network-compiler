@@ -5,7 +5,6 @@
   
 
 ## TODO:
-- [ ] Allow specifying over which index to contract two tensors
 - [ ] Lowering of TensorNetwork Dialect to Standard Dialect
 - [ ] Very simple optimization passes for testing
 
