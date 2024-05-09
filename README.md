@@ -21,6 +21,7 @@
 - Generate C++ files from TableGen.
 - Read MLIR (.mlir) files and output the Module. (e.g.`./build/bin/test_tensor_network test/mlir/first_test.mlir`)
 - Generate MLIR for the tensor network dialect.
+- Apply Lowerings (e.g `./build/bin/test_tensor_network --apply-lowerings test/mlir/ten_tensors.mlir`) (No Lowerings are implemented yet but the infrastructure should work now)
 
 ## Tensor Network Dialect:
 ### How is the Tensor Network Dialect structured?

@@ -43,6 +43,7 @@ set(TENSORNETWORK_BINARY_DIR ${PROJECT_BINARY_DIR})
 include_directories(${LLVM_INCLUDE_DIRS})
 include_directories(${MLIR_INCLUDE_DIRS})
 include_directories(${TENSORNETWORK_SOURCE_DIR}/include)
+include_directories(${TENSORNETWORK_SOURCE_DIR}/lib/mlir})
 include_directories(${TENSORNETWORK_BINARY_DIR}/include)
 
 # add_library(tensor_network_include_dirs INTERFACE)
