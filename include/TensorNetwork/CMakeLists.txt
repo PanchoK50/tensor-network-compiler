@@ -1,3 +1,4 @@
+
 add_mlir_dialect(TensorNetworkOps tensor_network)
 add_mlir_doc(TensorNetworkDialect TensorNetworkDialect TensorNetwork/ -gen-dialect-doc)
 add_mlir_doc(TensorNetworkOps TensorNetworkOps TensorNetwork/ -gen-op-doc)

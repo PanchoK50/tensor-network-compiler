@@ -14,6 +14,13 @@ def DummyTensorType: TensorNetwork_Type<"DummyTensor", "dummy_tensor"> {
     let description = "The Dummy Tensor is for testing purposes right now. The purpose of it is to store shape and rank";
 }
 
+
+def IndexLabelType : TensorNetwork_Type<"IndexLabel", "indexlabel"> {
+    let summary = "An index label used in tensor network operations";
+    let description = "An index label used in tensor network operations";
+}
+
+
 // def TensorShapeType : Type<"TensorShapeType", "tensor_shape"> {
 //   let summary = "A shape of a tensor";
 //   let description = [{

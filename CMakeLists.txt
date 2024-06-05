@@ -7,6 +7,7 @@ project(tensor_network_dialect LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR})
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frtti -fexceptions")
 
 #TODO: Remove this, or change to corresponding paths for your system.
 # This asumes that the llvm-project was cloned and built in the same directory as this project.
@@ -38,6 +39,17 @@ else()
     set(MLIR_INCLUDE_DIRS "${MLIR_INCLUDE_DIR};${MLIR_GENERATED_INCLUDE_DIR}")
 endif()
 
+# if (NOT LLVM_ENABLE_RTTI)
+#     message(STATUS "NOT LLVM_ENABLE_RTTI")
+#     if (MSVC)
+#         string(REGEX REPLACE "/GR" "" CMAKE_CXX_FLAGS "
+# {CMAKE_CXX_FLAGS} /GR-")
+#     else ()
+#         string(REGEX REPLACE "-frtti" "" CMAKE_CXX_FLAGS "
+# {CMAKE_CXX_FLAGS} -fno-rtti")
+#     endif ()
+# endif ()
+
 set(TENSORNETWORK_SOURCE_DIR ${PROJECT_SOURCE_DIR})
 set(TENSORNETWORK_BINARY_DIR ${PROJECT_BINARY_DIR})
 include_directories(${LLVM_INCLUDE_DIRS})
@@ -58,3 +70,5 @@ include_directories(${TENSORNETWORK_BINARY_DIR}/include)
 add_subdirectory(include)
 add_subdirectory(lib)
 add_subdirectory(test)
+
+add_compile_options(-frtti -fexceptions)

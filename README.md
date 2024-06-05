@@ -78,3 +78,6 @@ module {
 }
 
  ```
+
+## Helpful resources:
+- [MLIR Troubleshooting] (https://makslevental.github.io/working-with-mlir/)

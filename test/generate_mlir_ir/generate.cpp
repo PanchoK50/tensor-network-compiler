@@ -1,8 +1,10 @@
+#include <iostream>
 #include <vector>
 
 #include "TensorNetwork/MLIRGen.h"
 #include "TensorNetwork/TensorNetworkDialect.h"
 #include "TensorNetwork/TensorNetworkOps.h"
+#include "TensorNetwork/TensorNetworkTypes.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorOr.h"
@@ -13,54 +15,34 @@
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OpDefinition.h"
-#include "mlir/Parser/Parser.h"
-
+#include "mlir/IR/Operation.h"
 #include "mlir/IR/Types.h"
-#include "mlir/IR/BuiltinTypes.h"
-
-#include <iostream>
+#include "mlir/Parser/Parser.h"
 
 using namespace mlir;
 
 void createDummyTensorNetwork(MLIRContext* ctx) {
     ModuleOp module = ModuleOp::create(UnknownLoc::get(ctx));
-    // Create 10 tensors
-    std::vector<mlir::tensor_network::TensorOp> tensors;
-    OpBuilder builder(ctx);
-    for (int i = 0; i < 10; i++) {
-        Location loc = UnknownLoc::get(ctx);
-        ValueRange operands;
-        mlir::Type type = builder.getF64Type();
-        ShapedType shapedType = RankedTensorType::get({2, 2}, type);
-        llvm::ArrayRef<double> values = {1.0, 2.0, 3.0, 4.0};
-        auto valueAttr = DenseElementsAttr::get(shapedType, values);
-        // Create the tensor
-        auto tensor = builder.create<::mlir::tensor_network::TensorOp>(loc, shapedType, valueAttr);
-        tensors.push_back(tensor);
-        module.push_back(tensor);
-    }
 
-    // Print all the tensors right now:
-    // for (auto tensor : tensors) {
-    //     std::cout << "Tensor: " << tensor << std::endl;
-    // }
+    // Create a dummy IndexOp with size 4 and no name
+    mlir::OpBuilder builder(ctx);
 
-    for (size_t i = 0; i < tensors.size() - 1; i++) {
-        auto lhs = tensors[i];
-        auto rhs = tensors[i + 1];
-        // std::cout << "Contraction between " << lhs << " and " << rhs << std::endl;
-        Location loc = UnknownLoc::get(ctx);
-        // The result type should be the result of the contraction
-        auto resultType = RankedTensorType::get({2, 2}, builder.getF64Type()); //TODO Correct the shape
-        auto contractionIndices = builder.getI64ArrayAttr({0, 1});
-        auto edge = builder.create<::mlir::tensor_network::ContractionEdgeOp>(loc, resultType, lhs.getResult(), rhs.getResult(), contractionIndices);
-        module.push_back(edge);
-    }
+    // Create new Index Operation
 
-    
+    // Create a new IndexOp with size 4 and no name, and specify the return type
+    auto location = builder.getUnknownLoc();
+    auto returnType = ::mlir::tensor_network::IndexLabelType::get(ctx);
 
+    //StringRef
+    auto indexName = builder.getStringAttr("i");
+
+    auto size = builder.getI64IntegerAttr(4);
+    auto indexOp = builder.create<mlir::tensor_network::IndexOp>(location, returnType, size, indexName);
+
+    module.push_back(indexOp);
     module.dump();
 }
 

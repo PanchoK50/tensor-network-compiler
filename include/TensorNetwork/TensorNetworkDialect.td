@@ -2,6 +2,7 @@
 #define TENSOR_NETWORK_DIALECT
 
 include "mlir/IR/OpBase.td"
+include "mlir/IR/BuiltinAttributes.td"
 
 def TensorNetwork_Dialect : Dialect {
     let name = "tensor_network";

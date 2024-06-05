@@ -7,6 +7,9 @@
 #include "mlir/Interfaces/InferTypeOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Bytecode/BytecodeOpInterface.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/Attributes.h"
+#include "TensorNetwork/TensorNetworkTypes.h"
 
 
 #define GET_OP_CLASSES

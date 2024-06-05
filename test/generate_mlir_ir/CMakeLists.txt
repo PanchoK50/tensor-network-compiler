@@ -1,6 +1,6 @@
 add_executable(generate_mlir_ir generate.cpp)
 
-target_include_directories(generate_mlir_ir PRIVATE ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/../../TensorNetwork)
+target_include_directories(generate_mlir_ir PRIVATE ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/../../TensorNetwork) # TODO Determine if CMAKE_CURRENT_SOURCE_DIR does something (I think not)
 
 llvm_update_compile_flags(generate_mlir_ir)
 llvm_map_components_to_libnames(llvm_libs all)
