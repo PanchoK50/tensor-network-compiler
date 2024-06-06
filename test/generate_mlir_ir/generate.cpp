@@ -36,13 +36,29 @@ void createDummyTensorNetwork(MLIRContext* ctx) {
     auto location = builder.getUnknownLoc();
     auto returnType = ::mlir::tensor_network::IndexLabelType::get(ctx);
 
-    //StringRef
+    // StringRef
     auto indexName = builder.getStringAttr("i");
 
     auto size = builder.getI64IntegerAttr(4);
     auto indexOp = builder.create<mlir::tensor_network::IndexOp>(location, returnType, size, indexName);
 
     module.push_back(indexOp);
+
+       // Create two TensorOp operations with the same index
+    auto tensorType = RankedTensorType::get({2}, builder.getF64Type());
+    auto tensorValue1 = mlir::DenseElementsAttr::get(tensorType, {1.0, 2.0});
+    auto tensorValue2 = mlir::DenseElementsAttr::get(tensorType, {3.0, 4.0});
+
+    std::vector<mlir::Value> indexlabels;
+    indexlabels.push_back(indexOp);
+
+    auto tensorOp1 = builder.create<mlir::tensor_network::TensorOp>(location, tensorType, tensorValue1, indexlabels);
+    auto tensorOp2 = builder.create<mlir::tensor_network::TensorOp>(location, tensorType, tensorValue2, indexlabels);
+
+
+    module.push_back(tensorOp1);
+    module.push_back(tensorOp2);
+
     module.dump();
 }
 

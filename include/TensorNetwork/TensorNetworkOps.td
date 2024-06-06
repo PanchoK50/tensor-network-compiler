@@ -14,19 +14,6 @@ include "mlir/IR/BuiltinAttributes.td"
 include "mlir/Interfaces/CastInterfaces.td"
 
 
-
-// ============== TYPES ===============
-
-// // Inspired on COMET
-// def TN_IndexLabelType :
-//     DialectType<TensorNetwork_Dialect,
-//                 CPred<"$_self.isa<IndexLabelType>()">,
-//                 "IndexLabelType">;
-
-// /// Whether a type is an IndexLabelType.
-// def TNIsIndexLabelTypePred : CPred<"$_self.isa<IndexLabelType>()">;
-// def IndexLabel : Type<TNIsIndexLabelTypePred, "indexlabel">;
-
 // ============== TESTING OPERATIONS ===============
 
 def ConstantTensorOp : TensorNetwork_Op<"constant_tensor"> {
@@ -55,6 +42,25 @@ def ContractTensorsOp : TensorNetwork_Op<"contract"> {
 /* 
     The Dialect should be build like a graph, with nodes and edges.
  */
+// Represents an index in the tensor network.
+def IndexOp : TensorNetwork_Op<"index", [IsolatedFromAbove]>, Results<(outs IndexLabel)> {
+    let summary = "Create an index for a tensor dimension";
+    let description = [{
+        //TODO
+    }];
+
+    let arguments = (ins I64Attr:$size, OptionalAttr<StrAttr>:$name);
+    // let results = (outs IndexLabelType:$result);
+
+    let builders = [
+        OpBuilder<(ins "IntegerAttr":$size), [{
+            build($_builder, $_state, size);
+        }]>,
+        OpBuilder<(ins "IntegerAttr":$size, "StringRef":$name), [{
+            build($_builder, $_state, size, name);
+        }]>,
+    ];
+}
 
 // This represents a node in the tensor network. 
 def TensorOp : TensorNetwork_Op<"tensor"> {
@@ -64,7 +70,7 @@ def TensorOp : TensorNetwork_Op<"tensor"> {
     }]; 
 
     // let arguments = (ins F64ElementsAttr:$value, Variadic<IndexType>:$indices);
-    let arguments = (ins F64ElementsAttr:$value, Variadic<Index>:$indices);
+    let arguments = (ins F64ElementsAttr:$value, Variadic<IndexLabel>:$indices);
     let results = (outs F64Tensor:$result);
 
     let builders = [
@@ -75,6 +81,7 @@ def TensorOp : TensorNetwork_Op<"tensor"> {
 
 }
 
+// Should not be used, might remove later
 // Represents an edge in the tensor network.
 def ContractionEdgeOp : TensorNetwork_Op<"contraction_edge"> {
     let summary = "Specify a conection between two tensors in a tensor network";
@@ -93,27 +100,6 @@ def ContractionEdgeOp : TensorNetwork_Op<"contraction_edge"> {
     let assemblyFormat = "attr-dict  $lhs `:` type($lhs)  `with`  $rhs `:` type($rhs) `to` type($result)";
 }
 
-// Represents an index in the tensor network.
-def IndexOp : TensorNetwork_Op<"index", [IsolatedFromAbove]> {
-    let summary = "Create an index for a tensor dimension";
-    let description = [{
-        //TODO
-    }];
-
-    let arguments = (ins I64Attr:$size, OptionalAttr<StrAttr>:$name);
-    let results = (outs IndexLabelType:$result);
-
-    let traits = [IsolatedFromAbove];
-
-    let builders = [
-        OpBuilder<(ins "IntegerAttr":$size), [{
-            build($_builder, $_state, size);
-        }]>,
-        OpBuilder<(ins "IntegerAttr":$size, "StringRef":$name), [{
-            build($_builder, $_state, size, name);
-        }]>,
-    ];
-}
 
 
 
