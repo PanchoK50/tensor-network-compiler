@@ -52,7 +52,7 @@ int dumpMLIR() {
 
     if (applyLowerings) {
         mlir::PassManager pm(&context);
-        pm.addPass(mlir::tensor_network::createTensorNetworkToLinalgLoweringPass());
+        pm.addPass(mlir::tensor_network::createTensorNetworkNaiveLoweringPass());
         if (failed(pm.run(*module))) {
             llvm::errs() << "Error applying lowerings\n";
             return -1;

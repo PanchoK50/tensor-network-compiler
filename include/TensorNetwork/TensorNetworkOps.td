@@ -30,12 +30,17 @@ def ConstantTensorOp : TensorNetwork_Op<"constant_tensor"> {
 def ContractTensorsOp : TensorNetwork_Op<"contract"> {
     let summary = "Contract two tensors in a tensor network";
     let description = [{
-        //TODO
+        "Allows to specify a contraction manually."
     }]; 
 
     //Takes two tensors and returns a tensor
     let arguments = (ins AnyTensor:$lhs, AnyTensor:$rhs);
     let results = (outs AnyTensor:$result);
+    let builders = [
+        OpBuilder<(ins "Value":$lhs, "Value":$rhs), [{
+            build($_builder, $_state, lhs, rhs);
+        }]>,
+    ];
 }
 
 // ================== TENSOR NETWORK OPERATIONS ==================

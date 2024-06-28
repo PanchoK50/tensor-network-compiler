@@ -10,6 +10,7 @@ namespace mlir {
         #include "TensorNetwork/TensorNetworkPasses.h.inc"
         
         std::unique_ptr<mlir::Pass> createTensorNetworkToLinalgLoweringPass();
+        std::unique_ptr<mlir::Pass> createTensorNetworkNaiveLoweringPass();
 
 
 

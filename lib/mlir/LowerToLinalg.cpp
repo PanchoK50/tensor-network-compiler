@@ -54,65 +54,6 @@ static Value insertAllocAndDealloc(MemRefType type, Location loc,
 // TensorNetworkToLinalg RewritePatterns
 //===----------
 
-// Lowering for TensorOp
-// Lowering into Affine
-// struct TensorOpLowering : public ConversionPattern {
-//     TensorOpLowering(MLIRContext *ctx)
-//         : ConversionPattern(tensor_network::TensorOp::getOperationName(), 1, ctx) {}
-
-//     // This is from the TOY tutorial
-//     LogicalResult matchAndRewrite(Operation *op, ArrayRef<Value> operands,
-//                                   ConversionPatternRewriter &rewriter) const final {
-//         DenseElementsAttr constantValue = op.getValue();
-//         Location loc = op.getLoc();
-
-//         auto tensorType = llvm::cast<RankedTensorType>(op.getType());
-//         auto memRefType = convertTensorToMemRef(tensorType);
-//         auto alloc = insertAllocAndDealloc(memRefType, loc, rewriter);
-
-//         if (!valueShape.empty()) {
-//             for (auto i : llvm::seq<int64_t>(0, *llvm::max_element(valueShape)))
-//                 constantIndices.push_back(
-//                     rewriter.create<arith::ConstantIndexOp>(loc, i));
-//         } else {
-//             // This is the case of a tensor of rank 0.
-//             constantIndices.push_back(
-//                 rewriter.create<arith::ConstantIndexOp>(loc, 0));
-//         }
-
-//         // The constant operation represents a multi-dimensional constant, so we
-//         // will need to generate a store for each of the elements. The following
-//         // functor recursively walks the dimensions of the constant shape,
-//         // generating a store when the recursion hits the base case.
-//         SmallVector<Value, 2> indices;
-//         auto valueIt = constantValue.value_begin<FloatAttr>();
-//         std::function<void(uint64_t)> storeElements = [&](uint64_t dimension) {
-//             // The last dimension is the base case of the recursion, at this point
-//             // we store the element at the given index.
-//             if (dimension == valueShape.size()) {
-//                 rewriter.create<affine::AffineStoreOp>(
-//                     loc, rewriter.create<arith::ConstantOp>(loc, *valueIt++), alloc,
-//                     llvm::ArrayRef(indices));
-//                 return;
-//             }
-
-//             // Otherwise, iterate over the current dimension and add the indices to
-//             // the list.
-//             for (uint64_t i = 0, e = valueShape[dimension]; i != e; ++i) {
-//                 indices.push_back(constantIndices[i]);
-//                 storeElements(dimension + 1);
-//                 indices.pop_back();
-//             }
-//         };
-
-//         // Start the element storing recursion from the first dimension.
-//         storeElements(/*dimension=*/0);
-
-//         // Replace this operation with the generated alloc.
-//         rewriter.replaceOp(op, alloc);
-//         return success();
-//     }
-// };
 
 struct TensorOpLowering: public OpRewritePattern<tensor_network::TensorOp> {
     using OpRewritePattern<tensor_network::TensorOp>::OpRewritePattern;
@@ -121,6 +62,9 @@ struct TensorOpLowering: public OpRewritePattern<tensor_network::TensorOp> {
                                 PatternRewriter &rewriter) const final {
     
     llvm::errs() << "Lowering a TensorOp\n";
+
+
+    
 
     DenseElementsAttr constantValue = op.getValue();
     Location loc = op.getLoc();
@@ -225,10 +169,6 @@ struct ContractionEdgeOpLowering : public ConversionPattern {
 
         // Determine if the indices over which we want to contract match the dimensions
         // Right now the tensor contractions only contracts over 2 tensors and 1 index, possibly later more indices
-
-        // Get the dimension of 1th tensor at contractionIndices[0] and 2th tensor at contractionIndices[1]
-        // auto firstTensorDim = tensorOp->getOperands()[0].getType().cast<RankedTensorType>().getShape().size();
-        // auto secondTensorDim = tensorOp->getOperands()[1].getType().cast<RankedTensorType>().getShape().size();
     }
 };
 

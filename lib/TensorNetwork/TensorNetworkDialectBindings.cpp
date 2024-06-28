@@ -105,6 +105,19 @@ class ModuleManager {
         }
     }
 
+    mlir::Operation *createContractOp(OperationWrapper &lhs, OperationWrapper &rhs) {
+        mlir::Value lhsValue = lhs.get()->getResult(0);
+        mlir::Value rhsValue = rhs.get()->getResult(0);
+
+        //TODO: actually get the correct return Type. Compute from the smart indices.
+        mlir::Type lhsType = lhsValue.getType();
+
+        mlir::Location loc = builder_->getUnknownLoc();
+        auto contractOp = builder_->create<mlir::tensor_network::ContractTensorsOp>(loc, lhsType, lhsValue, rhsValue);
+        return contractOp;
+    }
+
+
     mlir::ModuleOp getModule() {
         return module_;
     }
@@ -134,7 +147,11 @@ PYBIND11_MODULE(tensor_network_ext, m) {
         .def("Tensor", [](ModuleManager &self, py::array array, py::args indices) {
             return OperationWrapper(self.createTensorOp(array, indices));
         })
+        .def("contract", [](ModuleManager &self, OperationWrapper &lhs, OperationWrapper &rhs) {
+            return OperationWrapper(self.createContractOp(lhs, rhs));
+        })
         .def("dump", [](ModuleManager &self) {
             self.getModule().dump();
         });
+
 }
