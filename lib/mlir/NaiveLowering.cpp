@@ -44,7 +44,7 @@ struct IndexOpLowering : public OpRewritePattern<tensor_network::IndexOp> {
 
     LogicalResult matchAndRewrite(tensor_network::IndexOp op,
                                   PatternRewriter &rewriter) const final {
-        auto constantOp = rewriter.create<mlir::arith::ConstantIntOp>(op.getLoc(), op.getSize(), 64);
+        auto constantOp = rewriter.create<mlir::arith::ConstantIndexOp>(op.getLoc(), op.getSize());
         rewriter.replaceOp(op, constantOp.getResult());
         return success();
     }
@@ -138,15 +138,6 @@ struct ContractOpLowering : public OpRewritePattern<tensor_network::ContractTens
         // Determine iterator types
         SmallVector<utils::IteratorType> iteratorTypes;
 
-        // TODO Correct this loop, not correct!!!
-
-        // for (unsigned i = 0; i < uniqueIndices.size() - commonIndices.size(); ++i) {
-        //     iteratorTypes.push_back(utils::IteratorType::parallel);
-        // }
-        // for (unsigned i = 0; i < commonIndices.size(); ++i) {
-        //     iteratorTypes.push_back(utils::IteratorType::reduction);
-        // }
-
         for (unsigned i = 0; i < uniqueIndices.size(); ++i) {
             if (std::find(commonIndices.begin(), commonIndices.end(), uniqueIndices[i]) != commonIndices.end()) {
                 iteratorTypes.push_back(utils::IteratorType::reduction);
@@ -164,31 +155,31 @@ struct ContractOpLowering : public OpRewritePattern<tensor_network::ContractTens
                 builder.create<linalg::YieldOp>(loc, addOp.getResult());
             });
 
-        // Print all debug information available about genericOp
-        llvm::errs() << "genericOp: " << genericOp << "\n";
-        llvm::errs() << "genericOp location: " << genericOp.getLoc() << "\n";
-        llvm::errs() << "genericOp result type: " << genericOp.getResultTypes() << "\n";
-        llvm::errs() << "genericOp operands: ";
-        for (auto operand : genericOp.getOperands()) {
-            llvm::errs() << operand << " ";
-        }
-        llvm::errs() << "\n";
-        llvm::errs() << "genericOp indexing maps: ";
-        for (auto map : genericOp.getIndexingMaps()) {
-            llvm::errs() << map << " ";
-        }
-        llvm::errs() << "\n";
-        llvm::errs() << "genericOp iterator types: ";
-        for (auto iterType : genericOp.getIteratorTypes()) {
-            llvm::errs() << iterType << " ";
-        }
-        llvm::errs() << "\n";
-        llvm::errs() << "genericOp body: " << genericOp.getBody() << "\n";
-        llvm::errs() << "genericOp body operations: ";
-        for (auto &op : genericOp.getBody()->getOperations()) {
-            llvm::errs() << op << " ";
-        }
-        llvm::errs() << "\n";
+        // // Print all debug information available about genericOp
+        // llvm::errs() << "genericOp: " << genericOp << "\n";
+        // llvm::errs() << "genericOp location: " << genericOp.getLoc() << "\n";
+        // llvm::errs() << "genericOp result type: " << genericOp.getResultTypes() << "\n";
+        // llvm::errs() << "genericOp operands: ";
+        // for (auto operand : genericOp.getOperands()) {
+        //     llvm::errs() << operand << " ";
+        // }
+        // llvm::errs() << "\n";
+        // llvm::errs() << "genericOp indexing maps: ";
+        // for (auto map : genericOp.getIndexingMaps()) {
+        //     llvm::errs() << map << " ";
+        // }
+        // llvm::errs() << "\n";
+        // llvm::errs() << "genericOp iterator types: ";
+        // for (auto iterType : genericOp.getIteratorTypes()) {
+        //     llvm::errs() << iterType << " ";
+        // }
+        // llvm::errs() << "\n";
+        // llvm::errs() << "genericOp body: " << genericOp.getBody() << "\n";
+        // llvm::errs() << "genericOp body operations: ";
+        // for (auto &op : genericOp.getBody()->getOperations()) {
+        //     llvm::errs() << op << " ";
+        // }
+        // llvm::errs() << "\n";
 
         rewriter.replaceOp(op, genericOp.getResult(0));
 

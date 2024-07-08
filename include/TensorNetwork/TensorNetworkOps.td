@@ -48,7 +48,7 @@ def ContractTensorsOp : TensorNetwork_Op<"contract"> {
     The Dialect should be build like a graph, with nodes and edges.
  */
 // Represents an index in the tensor network.
-def IndexOp : TensorNetwork_Op<"index", [IsolatedFromAbove]>, Results<(outs IndexLabel)> {
+def IndexOp : TensorNetwork_Op<"index", [IsolatedFromAbove, Pure]>, Results<(outs IndexLabel)> {
     let summary = "Create an index for a tensor dimension";
     let description = [{
         //TODO

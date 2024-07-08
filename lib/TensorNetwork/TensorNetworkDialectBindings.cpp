@@ -47,7 +47,24 @@ class ModuleManager {
 
         builder_ = std::make_unique<mlir::OpBuilder>(ctx_.get());
         module_ = mlir::ModuleOp::create(builder_->getUnknownLoc());
-        builder_->setInsertionPointToStart(module_.getBody());
+        createFunction("main");
+    }
+
+    void createFunction(const std::string &name) {
+        auto funcType = builder_->getFunctionType({}, {});
+        auto func = builder_->create<mlir::func::FuncOp>(builder_->getUnknownLoc(), name, funcType);
+        auto &entryBlock = *func.addEntryBlock();
+        functions_.push_back(func);
+        module_.push_back(func);
+
+
+        // auto callOp = builder_->create<mlir::func::CallOp>(builder_->getUnknownLoc(), func);
+        // module_.push_back(callOp);
+
+        builder_->setInsertionPointToEnd(&entryBlock);
+        builder_->create<mlir::func::ReturnOp>(builder_->getUnknownLoc());
+
+        builder_->setInsertionPointToStart(&entryBlock);
     }
 
     mlir::Operation *createIndexOp(int64_t size, const std::string &name) {
@@ -59,33 +76,25 @@ class ModuleManager {
         return indexOp;
     }
 
-    // TODO: Create the function overloading with default name
     mlir::Operation *createIndexOp(int64_t size) {
         std::string name = "index_" + std::to_string(nextIndexId_++);
         return createIndexOp(size, name);
     }
 
-    // Still need to add the verification of the values, etc.
     mlir::Operation *createTensorOp(py::array array, py::args pyIndices) {
-        // Get the numpy array shape and data
         auto shape = array.shape();
-        auto data = static_cast<double *>(array.mutable_data());  // Ensure data is cast to double*
+        auto data = static_cast<double *>(array.mutable_data());
 
-        // Convert the shape to an llvm::ArrayRef
         llvm::ArrayRef<long int> shapeRef(shape, array.ndim());
 
-        // Create a tensor type from the numpy array shape
         auto tensorType = mlir::RankedTensorType::get(shapeRef, builder_->getF64Type());
 
-        // Create a tensor op
         mlir::Location loc = builder_->getUnknownLoc();
 
-        // Ensure data matches the tensorType's element type
         if (tensorType.getElementType().isF64()) {
             llvm::ArrayRef<double> dataRef(data, array.size());
             auto tensorValue = mlir::DenseElementsAttr::get(tensorType, dataRef);
 
-            // Create a vector of index labels from the list of indices
             std::vector<mlir::Value> indexLabels;
             for (py::handle pyIndex : pyIndices) {
                 auto indexWrapper = pyIndex.cast<OperationWrapper>();
@@ -95,11 +104,20 @@ class ModuleManager {
                 indexLabels.push_back(indexValue);
             }
 
-            // Create the tensor op with the tensor type, tensor value, and index labels
+            if (indexLabels.size() != shapeRef.size()) {
+                throw std::runtime_error("The number of indices does not match the number of dimensions in the numpy array.");
+            }
+
+            for (size_t i = 0; i < indexLabels.size(); ++i) {
+                auto indexOp = mlir::cast<mlir::tensor_network::IndexOp>(indexLabels[i].getDefiningOp());
+                if (indexOp.getSize() != shapeRef[i]) {
+                    throw std::runtime_error("The size of the index does not match the corresponding dimension size in the numpy array.");
+                }
+            }
+
             auto tensorOp = builder_->create<mlir::tensor_network::TensorOp>(loc, tensorType, tensorValue, indexLabels);
             return tensorOp;
         } else {
-            // Handle error for unsupported tensor element type
             llvm::errs() << "Unsupported tensor element type: " << tensorType.getElementType() << "\n";
             return nullptr;
         }
@@ -109,14 +127,12 @@ class ModuleManager {
         mlir::Value lhsValue = lhs.get()->getResult(0);
         mlir::Value rhsValue = rhs.get()->getResult(0);
 
-        //TODO: actually get the correct return Type. Compute from the smart indices.
-        mlir::Type lhsType = lhsValue.getType();
-
+        // Using tensor<f64> type as return type without specifying the shape
+        mlir::Type returnType = mlir::RankedTensorType::get({}, builder_->getF64Type());
         mlir::Location loc = builder_->getUnknownLoc();
-        auto contractOp = builder_->create<mlir::tensor_network::ContractTensorsOp>(loc, lhsType, lhsValue, rhsValue);
+        auto contractOp = builder_->create<mlir::tensor_network::ContractTensorsOp>(loc, returnType, lhsValue, rhsValue);
         return contractOp;
     }
-
 
     mlir::ModuleOp getModule() {
         return module_;
@@ -127,6 +143,7 @@ class ModuleManager {
     mlir::ModuleOp module_;
     std::unique_ptr<mlir::MLIRContext> ctx_;
     int nextIndexId_ = 0;
+    std::vector<mlir::func::FuncOp> functions_;
 };
 
 PYBIND11_MODULE(tensor_network_ext, m) {
@@ -153,5 +170,4 @@ PYBIND11_MODULE(tensor_network_ext, m) {
         .def("dump", [](ModuleManager &self) {
             self.getModule().dump();
         });
-
 }
