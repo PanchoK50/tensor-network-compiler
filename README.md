@@ -21,9 +21,9 @@
 
 ## Current Features:
 - Generate C++ files from TableGen.
-- Read MLIR (.mlir) files and output the Module. (e.g.`./build/bin/test_tensor_network test/mlir/first_test.mlir`)
-- Generate MLIR for the tensor network dialect.
-- Apply Lowerings (e.g `./build/bin/test_tensor_network --apply-lowerings test/mlir/ten_tensors.mlir`) (No Lowerings are implemented yet but the infrastructure should work now)
+- Read MLIR (.mlir) files and output the Module. (e.g.`./build/bin/test_tensor_network test/mlir/mod_main_func.mlir`)
+- Generate MLIR for the tensor network dialect via python keybindings (e.g. frontend/generate.py)
+- Apply Lowerings (e.g `./build/bin/test_tensor_network --apply-lowerings test/mlir/mod_main_func.mlir`) 
 
 ## Tensor Network Dialect:
 ### How is the Tensor Network Dialect structured?
