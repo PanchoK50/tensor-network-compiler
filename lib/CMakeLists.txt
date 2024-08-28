@@ -6,7 +6,6 @@ add_subdirectory(TensorNetwork)
 #   TensorNetwork/TensorNetworkTypes.cpp
 #   TensorNetwork/TensorNetworkPasses.cpp
 
-#   mlir/LowerToLinalg.cpp
 # )
 
 # add_llvm_library(MLIRTensorNetwork
@@ -15,7 +14,6 @@ add_subdirectory(TensorNetwork)
 #   TensorNetwork/TensorNetworkTypes.cpp
 #   TensorNetwork/TensorNetworkPasses.cpp
 
-#   mlir/LowerToLinalg.cpp
 
 #   ADDITIONAL_HEADER_DIRS
 #   ${PROJECT_SOURCE_DIR}/include/TensorNetwork

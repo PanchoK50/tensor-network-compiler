@@ -1,6 +1,10 @@
 # Set CMP0148 policy to NEW for modern Python finding modules
 cmake_policy(SET CMP0148 NEW)
 
+set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g3 -O0 -fno-inline -fno-omit-frame-pointer")
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -gdwarf-4 -g3")
+
 # Ensure RTTI and exceptions are enabled globally
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frtti -fexceptions")
 
@@ -21,6 +25,7 @@ add_mlir_dialect_library(MLIRTensorNetwork
     TensorNetworkOps.cpp
     TensorNetworkPasses.cpp
     TensorNetworkDialectBindings.cpp
+    ../mlir/NaiveLowering.cpp
 
     ADDITIONAL_HEADER_DIRS
     ${PROJECT_SOURCE_DIR}/include/TensorNetwork
@@ -41,13 +46,51 @@ add_mlir_dialect_library(MLIRTensorNetwork
 
 # Add the pybind11 module
 pybind11_add_module(tensor_network_ext TensorNetworkDialectBindings.cpp)
-target_include_directories(tensor_network_ext PRIVATE ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
-target_link_libraries(tensor_network_ext PRIVATE 
-    MLIRTensorNetwork 
-    MLIRIR 
-    MLIRSupport 
-    MLIRInferTypeOpInterface
-    MLIRFuncDialect
-    pybind11::module 
+target_include_directories(tensor_network_ext 
+    PRIVATE 
+    ${LLVM_INCLUDE_DIRS} 
+    ${MLIR_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mlir
 )
-# target_compile_options(tensor_network_ext PRIVATE -frtti -fexceptions)
+target_link_libraries(tensor_network_ext PRIVATE 
+    LLVMCore
+    MLIRAffineDialect
+    MLIRAnalysis
+    MLIRArithToLLVM
+    MLIRAffineToStandard
+    MLIRBufferizationPipelines
+    MLIRBytecodeOpInterface
+    MLIRCallInterfaces
+    MLIRCastInterfaces
+    MLIRFuncDialect
+    MLIRFuncToLLVM
+    MLIRFunctionInterfaces
+    MLIRIndexToLLVM
+    MLIRInferTypeOpInterface
+    MLIRIR
+    MLIRLinalgDialect
+    MLIRLinalgToStandard
+    MLIRLLVMDialect
+    MLIRMemRefDialect
+    MLIRMemRefToLLVM
+    MLIRParser
+    MLIRPass
+    MLIRReconcileUnrealizedCasts
+    MLIRSCFDialect
+    MLIRSCFToControlFlow
+    MLIRSideEffectInterfaces
+    MLIRSupport
+    MLIRTensorDialect
+    MLIRTensorNetwork
+    MLIRTensorToLinalg
+    MLIRTransforms
+    MLIRVectorDialect
+    MLIRVectorToLLVMPass
+    MLIRExecutionEngine
+    MLIRMathToLLVM
+
+    pybind11::module
+)
+
+target_compile_options(MLIRTensorNetwork PRIVATE -g3 -O0 -fno-inline -fno-omit-frame-pointer)
+target_compile_options(tensor_network_ext PRIVATE -g3 -O0 -fno-inline -fno-omit-frame-pointer)

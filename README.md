@@ -41,3 +41,5 @@ Command: `./build/bin/test_tensor_network --apply-lowerings test/mlir/mod_main_f
 
 ## Helpful resources:
 - [MLIR Troubleshooting] (https://makslevental.github.io/working-with-mlir/)
+- [Writing a Kernel] (https://medium.com/@hxu296/a-trip-to-kernels-understanding-pytorchs-internal-architecture-fc955aafd54c)
+- [Writing a Kernel 2] (https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/README.md)

@@ -1,6 +1,8 @@
 #include "TensorNetwork/TensorNetworkTypes.h"
 
 #include "TensorNetwork/TensorNetworkDialect.h"
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"

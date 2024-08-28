@@ -1,4 +1,4 @@
-add_executable(test_tensor_network test.cpp ../lib/mlir/LowerToLinalg.cpp ../lib/mlir/NaiveLowering.cpp ../lib/mlir/LowerToLLVM.cpp)
+add_executable(test_tensor_network test.cpp ../lib/mlir/NaiveLowering.cpp ../lib/mlir/LowerToLLVM.cpp)
 
 #Print llvm and mlir include directories
 message(STATUS "TEST CMAKE:")
@@ -27,6 +27,7 @@ target_link_libraries(test_tensor_network
     MLIRAffineDialect
     MLIRMemRefDialect
     MLIRLLVMDialect
+    MLIRTensorDialect
     MLIRSCFDialect
     MLIRBytecodeOpInterface
     MLIRSideEffectInterfaces
@@ -58,7 +59,6 @@ target_sources(test_tensor_network
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/TensorNetwork/TensorNetworkDialect.cpp 
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/TensorNetwork/TensorNetworkOps.cpp 
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/TensorNetwork/TensorNetworkTypes.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/mlir/LowerToLinalg.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/mlir/NaiveLowering.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/mlir/LowerToLLVM.cpp
 )

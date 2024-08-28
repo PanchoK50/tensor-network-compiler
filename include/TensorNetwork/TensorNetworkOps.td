@@ -13,40 +13,51 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/IR/BuiltinAttributes.td"
 include "mlir/Interfaces/CastInterfaces.td"
 
+// ================== TENSOR NETWORK OPERATIONS ==================
 
-// ============== TESTING OPERATIONS ===============
-
-def ConstantTensorOp : TensorNetwork_Op<"constant_tensor"> {
-    let summary = "Create a constant tensor";
+def TensorDeclOp : TensorNetwork_Op<"tensor_decl"> {
+    let summary = "Declare a tensor with indices";
     let description = [{
         //TODO
-    }]; 
+    }];
 
-    let arguments = (ins F64ElementsAttr:$value);
-    let results = (outs F64Tensor:$result);
+    let arguments = (ins Variadic<IndexLabel>:$indices);
+    let results = (outs TensorWithIndicesType:$result);
 }
 
-//This is just a contraction edge, experimenting with nodes and edges for now
 def ContractTensorsOp : TensorNetwork_Op<"contract"> {
-    let summary = "Contract two tensors in a tensor network";
+    let summary = "Contract two tensors along specified indices";
     let description = [{
-        "Allows to specify a contraction manually."
-    }]; 
+        Contracts two tensors along specified indices and returns a new tensor with the remaining indices.
+    }];
 
-    //Takes two tensors and returns a tensor
-    let arguments = (ins AnyTensor:$lhs, AnyTensor:$rhs);
-    let results = (outs AnyTensor:$result);
-    let builders = [
-        OpBuilder<(ins "Value":$lhs, "Value":$rhs), [{
-            build($_builder, $_state, lhs, rhs);
-        }]>,
-    ];
+    let arguments = (ins
+        TensorWithIndicesType:$lhs,
+        TensorWithIndicesType:$rhs
+    );
+
+    let results = (outs
+        TensorWithIndicesType:$result
+    );
+
 }
 
-// ================== TENSOR NETWORK OPERATIONS ==================
-/* 
-    The Dialect should be build like a graph, with nodes and edges.
- */
+def ContractMultipleTensorsOp : TensorNetwork_Op<"contract_multiple"> {
+    let summary = "Contract multiple tensors along specified indices";
+    let description = [{
+        Contracts multiple tensors along specified indices and returns a new tensor with the remaining indices.
+    }];
+
+    let arguments = (ins
+        Variadic<TensorWithIndicesType>:$tensors
+    );
+
+    let results = (outs
+        TensorWithIndicesType:$result
+    );
+
+}
+
 // Represents an index in the tensor network.
 def IndexOp : TensorNetwork_Op<"index", [IsolatedFromAbove, Pure]>, Results<(outs IndexLabel)> {
     let summary = "Create an index for a tensor dimension";
@@ -67,45 +78,26 @@ def IndexOp : TensorNetwork_Op<"index", [IsolatedFromAbove, Pure]>, Results<(out
     ];
 }
 
-// This represents a node in the tensor network. 
 def TensorOp : TensorNetwork_Op<"tensor"> {
-    let summary = "Create a tensor";
+    let summary = "Create a tensor with indices with constant value as attribute";
     let description = [{
         //TODO
     }]; 
 
-    // let arguments = (ins F64ElementsAttr:$value, Variadic<IndexType>:$indices);
     let arguments = (ins F64ElementsAttr:$value, Variadic<IndexLabel>:$indices);
-    let results = (outs F64Tensor:$result);
-
-    let builders = [
-    OpBuilder<(ins "DenseElementsAttr":$value, "ValueRange":$indices), [{
-      build($_builder, $_state, value.getType(), value, indices);
-    }]>,
-    ];
-
+    let results = (outs TensorWithIndicesType:$result);
 }
 
-// Should not be used, might remove later
-// Represents an edge in the tensor network.
-def ContractionEdgeOp : TensorNetwork_Op<"contraction_edge"> {
-    let summary = "Specify a conection between two tensors in a tensor network";
+def TensorFromValueOp : TensorNetwork_Op<"tensor_from_value"> {
+    let summary = "Create a tensor with indices from an SSA value";
     let description = [{
-        //TODO
+        This operation creates a tensor with indices from an SSA value.
     }];
 
-    let arguments = (ins AnyTensor:$lhs, AnyTensor:$rhs, ArrayAttr:$contracted_indices);
-    let results = (outs AnyTensor:$result);
-    let builders = [
-        OpBuilder<(ins "Value":$lhs, "Value":$rhs, "ArrayAttr":$contracted_indices), [{
-            build($_builder, $_state, lhs, rhs, contracted_indices);
-        }]>,
-    ];
-
-    let assemblyFormat = "attr-dict  $lhs `:` type($lhs)  `with`  $rhs `:` type($rhs) `to` type($result)";
+    let arguments = (ins
+        AnyTensor:$value
+    );
+    let results = (outs TensorWithIndicesType:$result);
 }
-
-
-
 
 #endif // TENSOR_NETWORK_OPS
