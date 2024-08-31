@@ -190,11 +190,9 @@ struct ContractOpLowering : public OpRewritePattern<tensor_network::ContractTens
 
     LogicalResult matchAndRewrite(tensor_network::ContractTensorsOp op,
                                   PatternRewriter &rewriter) const final {
-
         Value lhs = op.getLhs();
         Value rhs = op.getRhs();
 
-        //Check if all the arguments are created via the TensorFromValueOp
         if (!lhs.getDefiningOp<tensor_network::TensorFromValueOp>() || !rhs.getDefiningOp<tensor_network::TensorFromValueOp>()) {
             return failure();
         }
@@ -245,22 +243,27 @@ struct ContractOpLowering : public OpRewritePattern<tensor_network::ContractTens
 
         SmallVector<AffineMap, 3> indexingMaps;
 
+        // Create indexing map for left-hand side tensor
         SmallVector<AffineExpr, 4> lhsExprs;
-        for (unsigned i = 0; i < uniqueIndices.size(); ++i) {
-            if (std::find(lhsIndices.begin(), lhsIndices.end(), uniqueIndices[i]) != lhsIndices.end()) {
-                lhsExprs.push_back(rewriter.getAffineDimExpr(i));
+        for (auto lhsIndex : lhsIndices) {
+            auto it = std::find(uniqueIndices.begin(), uniqueIndices.end(), lhsIndex);
+            if (it != uniqueIndices.end()) {
+                lhsExprs.push_back(rewriter.getAffineDimExpr(std::distance(uniqueIndices.begin(), it)));
             }
         }
         indexingMaps.push_back(AffineMap::get(uniqueIndices.size(), 0, lhsExprs, rewriter.getContext()));
 
+        // Create indexing map for right-hand side tensor
         SmallVector<AffineExpr, 4> rhsExprs;
-        for (unsigned i = 0; i < uniqueIndices.size(); ++i) {
-            if (std::find(rhsIndices.begin(), rhsIndices.end(), uniqueIndices[i]) != rhsIndices.end()) {
-                rhsExprs.push_back(rewriter.getAffineDimExpr(i));
+        for (auto rhsIndex : rhsIndices) {
+            auto it = std::find(uniqueIndices.begin(), uniqueIndices.end(), rhsIndex);
+            if (it != uniqueIndices.end()) {
+                rhsExprs.push_back(rewriter.getAffineDimExpr(std::distance(uniqueIndices.begin(), it)));
             }
         }
         indexingMaps.push_back(AffineMap::get(uniqueIndices.size(), 0, rhsExprs, rewriter.getContext()));
 
+        // Create indexing map for result tensor
         SmallVector<AffineExpr, 4> resultExprs;
         for (unsigned i = 0; i < uniqueIndices.size(); ++i) {
             if (std::find(commonIndices.begin(), commonIndices.end(), uniqueIndices[i]) == commonIndices.end()) {
@@ -278,7 +281,6 @@ struct ContractOpLowering : public OpRewritePattern<tensor_network::ContractTens
             }
         }
 
-
         auto genericOp = rewriter.create<linalg::GenericOp>(
             op.getLoc(), TypeRange{resultType}, ValueRange{lhsTensor, rhsTensor}, ValueRange{zeroConstant.getResult()},
             indexingMaps, iteratorTypes,
@@ -288,25 +290,21 @@ struct ContractOpLowering : public OpRewritePattern<tensor_network::ContractTens
                 builder.create<linalg::YieldOp>(loc, addOp.getResult());
             });
 
-        // now we need to put the result from the generic op into a tensorFromValueOp
         auto resultTensor = genericOp.getResult(0);
         auto newTensorFromValueOp = rewriter.create<tensor_network::TensorFromValueOp>(op.getLoc(), op.getResult().getType(), resultTensor);
 
         rewriter.replaceOp(op, newTensorFromValueOp.getResult());
 
-        return success(); 
+        return success();
     }
 
 private:
-    // Helper function to extract tensor value based on operation type
     Value extractTensorValue(PatternRewriter &rewriter, Value v) const {
         if (auto tensorFromValueOp = v.getDefiningOp<tensor_network::TensorFromValueOp>()) {
-            // Extract the underlying tensor from TensorFromValueOp
             return tensorFromValueOp.getOperand();
         }
         return nullptr;
     }
-
 };
 
 
@@ -316,10 +314,88 @@ struct ContractMultipleTensorsOpLowering : public OpRewritePattern<tensor_networ
     LogicalResult matchAndRewrite(tensor_network::ContractMultipleTensorsOp op,
                                   PatternRewriter &rewriter) const final {
 
+        // Get the list of tensors to contract
+        SmallVector<Value, 4> tensors(op.getTensors().begin(), op.getTensors().end());
 
+        // Greedy algorithm to determine contraction order
+        while (tensors.size() > 1) {
+            int bestI = 0, bestJ = 1;
+            int64_t bestCost = std::numeric_limits<int64_t>::max();
 
+            for (int i = 0; i < tensors.size(); ++i) {
+                for (int j = i + 1; j < tensors.size(); ++j) {
+                    int64_t cost = calculateContractionCost(tensors[i], tensors[j]);
+                    if (cost < bestCost) {
+                        bestCost = cost;
+                        bestI = i;
+                        bestJ = j;
+                    }
+                }
+            }
+
+            // Contract the best pair
+            auto resultType = determineContractedTensorType(tensors[bestI], tensors[bestJ], rewriter);
+            auto contractOp = rewriter.create<tensor_network::ContractTensorsOp>(
+                op.getLoc(), 
+                resultType,
+                tensors[bestI], tensors[bestJ]);
+
+            // Replace the contracted tensors with the result
+            tensors[bestI] = contractOp.getResult();
+            tensors.erase(tensors.begin() + bestJ);
+        }
+
+        // The final result is in tensors[0]
+        rewriter.replaceOp(op, tensors[0]);
 
         return success();
+    }
+
+private:
+    int64_t calculateContractionCost(Value lhs, Value rhs) const {
+        auto lhsType = lhs.getType().cast<tensor_network::TensorWithIndicesType>();
+        auto rhsType = rhs.getType().cast<tensor_network::TensorWithIndicesType>();
+        auto lhsIndices = lhsType.getIndices();
+        auto rhsIndices = rhsType.getIndices();
+
+        int64_t cost = 1;
+        for (auto index : lhsIndices) {
+            if (std::find(rhsIndices.begin(), rhsIndices.end(), index) == rhsIndices.end()) {
+                cost *= index.cast<TypeAttr>().getValue().cast<tensor_network::IndexLabelType>().getSize().getInt();
+            }
+        }
+        for (auto index : rhsIndices) {
+            if (std::find(lhsIndices.begin(), lhsIndices.end(), index) == lhsIndices.end()) {
+                cost *= index.cast<TypeAttr>().getValue().cast<tensor_network::IndexLabelType>().getSize().getInt();
+            }
+        }
+        return cost;
+    }
+
+    tensor_network::TensorWithIndicesType determineContractedTensorType(Value lhs, Value rhs, PatternRewriter &rewriter) const {
+        auto lhsType = lhs.getType().cast<tensor_network::TensorWithIndicesType>();
+        auto rhsType = rhs.getType().cast<tensor_network::TensorWithIndicesType>();
+        auto lhsIndices = lhsType.getIndices();
+        auto rhsIndices = rhsType.getIndices();
+
+        SmallVector<mlir::Attribute> resultIndices;
+        SmallVector<int64_t> resultShape;
+
+        for (auto index : lhsIndices) {
+            if (std::find(rhsIndices.begin(), rhsIndices.end(), index) == rhsIndices.end()) {
+                resultIndices.push_back(index);
+                resultShape.push_back(index.cast<TypeAttr>().getValue().cast<tensor_network::IndexLabelType>().getSize().getInt());
+            }
+        }
+        for (auto index : rhsIndices) {
+            if (std::find(lhsIndices.begin(), lhsIndices.end(), index) == lhsIndices.end()) {
+                resultIndices.push_back(index);
+                resultShape.push_back(index.cast<TypeAttr>().getValue().cast<tensor_network::IndexLabelType>().getSize().getInt());
+            }
+        }
+
+        auto resultTensorType = RankedTensorType::get(resultShape, rewriter.getF64Type());
+        return tensor_network::TensorWithIndicesType::get(rewriter.getContext(), resultTensorType, rewriter.getArrayAttr(resultIndices));
     }
 };
 
@@ -340,7 +416,7 @@ struct WriteFinalTensorPattern : public OpRewritePattern<mlir::func::FuncOp> {
     LogicalResult matchAndRewrite(mlir::func::FuncOp op,
                                   PatternRewriter &rewriter) const final {
 
-        llvm::errs() << "Matching FuncOp: " << op.getName() << "\n";
+        // llvm::errs() << "Matching FuncOp: " << op.getName() << "\n";
 
         // Check if the operation has already been rewritten
         if (op->hasAttr("rewritten")) {
@@ -429,9 +505,33 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
         mlir::linalg::LinalgDialect, mlir::tensor::TensorDialect,
         mlir::memref::MemRefDialect, mlir::bufferization::BufferizationDialect>();
 
+    // Step 0: Determine the contraction order of ContractMultiple
+    {
+        // llvm::errs() << "Module before lowering:\n";
+        // module.dump();
+
+        // llvm::errs() << "Step 0: Determine the contraction order of ContractMultiple\n";
+
+        RewritePatternSet contractionOrderPatterns(&getContext());
+        contractionOrderPatterns.add<ContractMultipleTensorsOpLowering>(&getContext());
+
+        if (failed(applyPatternsAndFoldGreedily(module, std::move(contractionOrderPatterns)))) {
+            signalPassFailure();
+            return;
+        }
+
+        // module.dump();
+
+        if (failed(mlir::verify(module))) {
+            llvm::errs() << "Error in module verification\n";
+            signalPassFailure();
+            return;
+        }
+    }
+
     // Step 1: Apply the lowering patterns
     {
-        llvm::errs() << "Step 1: Apply the lowering patterns\n";
+        // llvm::errs() << "Step 1: Apply the lowering patterns\n";
 
         RewritePatternSet loweringPatterns(&getContext());
         loweringPatterns.add<TensorDeclOpLowering, TensorOpLowering, IndexOpLowering, 
@@ -442,7 +542,7 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
             return;
         }
 
-        module.dump();
+        // module.dump();
 
         if (failed(mlir::verify(module))) {
             llvm::errs() << "Error in module verification\n";
@@ -463,7 +563,7 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
             return;
         }
 
-        module.dump();
+        // module.dump();
 
         if (failed(mlir::verify(module))) {
             llvm::errs() << "Error in module verification\n";
@@ -476,7 +576,7 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
 
     // Step 3: Apply the RemoveTensorFromValuesOp pattern
     {
-        llvm::errs() << "Step 3: Apply the RemoveTensorFromValuesOp pattern\n";
+        // llvm::errs() << "Step 3: Apply the RemoveTensorFromValuesOp pattern\n";
 
         RewritePatternSet removalPatterns(&getContext());
         removalPatterns.add<RemoveTensorFromValueOp>(&getContext());
@@ -486,7 +586,7 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
             return;
         }
 
-        module.dump();
+        // module.dump();
         if (failed(mlir::verify(module))) {
             llvm::errs() << "Error in module verification\n";
             signalPassFailure();

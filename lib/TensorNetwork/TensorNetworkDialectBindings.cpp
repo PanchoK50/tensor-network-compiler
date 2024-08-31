@@ -176,6 +176,7 @@ public:
         functions_.push_back(func);
         module_.push_back(func);
 
+
         builder_->setInsertionPointToEnd(&entryBlock);
         builder_->create<mlir::func::ReturnOp>(builder_->getUnknownLoc());
 
@@ -253,8 +254,7 @@ public:
                 tensorValue, indexLabels);
             return tensorOp;
         } else {
-            llvm::errs() << "Unsupported tensor element type: "
-                << tensorType.getElementType() << "\n";
+            llvm::errs() << "Unsupported tensor element type: " << tensorType.getElementType() << "\n";
             return nullptr;
         }
     }
@@ -320,6 +320,38 @@ public:
         return contractOp;
     }
 
+    mlir::Operation *createContractMultipleTensorsOp(const std::vector<OperationWrapper> &tensors) {
+        std::vector<mlir::Value> tensorValues;
+        for (const auto &tensor : tensors) {
+            tensorValues.push_back(const_cast<OperationWrapper&>(tensor).get()->getResult(0));
+        }
+
+        // Determine the result type
+        auto firstTensorType = tensorValues[0].getType().cast<mlir::tensor_network::TensorWithIndicesType>();
+        auto resultTensorType = firstTensorType.getTensorType();
+        //TODO: Change this, to either take some placeholder or actually compute the result type
+        auto resultIndices = firstTensorType.getIndices();
+
+        // Calculate the shape of the result tensor
+        llvm::SmallVector<int64_t, 4> resultShape;
+        for (auto index : resultIndices) {
+            auto indexType = index.cast<mlir::TypeAttr>().getValue().cast<mlir::tensor_network::IndexLabelType>();
+            resultShape.push_back(indexType.getSize().getInt());
+        }
+
+        auto resultTensorTypeWithShape = mlir::RankedTensorType::get(resultShape, resultTensorType.cast<mlir::ShapedType>().getElementType());
+
+        auto resultType = mlir::tensor_network::TensorWithIndicesType::get(
+            builder_->getContext(), 
+            resultTensorTypeWithShape, 
+            builder_->getArrayAttr(resultIndices));
+
+        return builder_->create<mlir::tensor_network::ContractMultipleTensorsOp>(
+            builder_->getUnknownLoc(),
+            resultType,
+            tensorValues);
+    }
+
     mlir::ModuleOp getModule() { return module_; }
 
     py::array run() {
@@ -351,7 +383,7 @@ public:
             totalSize *= dim;
         }
 
-        llvm::errs() << "Total size: " << totalSize << "\n";
+        // llvm::errs() << "Total size: " << totalSize << "\n";
 
         if (failed(lowerModuleToLLVM())) {
             llvm::errs() << "Failed to lower the module to LLVM\n";
@@ -400,17 +432,13 @@ public:
         }
         result.strides = strideValues.data();
 
-        llvm::errs() << "Invoking JIT\n";
+        // llvm::errs() << "Invoking JIT\n";
         auto invocationResult = engine->invoke("main", &result);
         if (invocationResult) {
             llvm::errs() << "JIT invocation failed: " << invocationResult << "\n";
             return py::array();
         }
-        llvm::errs() << "JIT invocation succeeded\n";
-
-        // for (int i = 0; i < totalSize; ++i) {
-        //     llvm::errs() << result.data[i] << " ";
-        // }
+        // llvm::errs() << "JIT invocation succeeded\n";
 
         // Create py::array with the correct shape
         std::vector<ssize_t> pyShape(shape.begin(), shape.end());
@@ -489,5 +517,14 @@ PYBIND11_MODULE(tensor_network_ext, m) {
              return OperationWrapper(self.createContractOp(lhs, rhs));
              })
         .def("dump", [](ModuleManager &self) { self.getModule().dump(); })
-        .def("run", [](ModuleManager &self) { return self.run(); });
+        .def("contract_multiple", [](ModuleManager &self, py::args tensors) {
+            std::vector<OperationWrapper> tensorOps;
+            for (auto tensor : tensors) {
+                tensorOps.push_back(tensor.cast<OperationWrapper>());
+            }
+            return OperationWrapper(self.createContractMultipleTensorsOp(tensorOps));
+        })
+        .def("run", [](ModuleManager &self) { return self.run(); })
+        .def("pre_compile", [](ModuleManager &self) { return; })
+        .def("load", [](ModuleManager &self, const std::string &filename) { return; });
 }
