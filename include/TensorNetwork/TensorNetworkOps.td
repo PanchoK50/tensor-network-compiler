@@ -15,6 +15,56 @@ include "mlir/Interfaces/CastInterfaces.td"
 
 // ================== TENSOR NETWORK OPERATIONS ==================
 
+def TransposeOp : TensorNetwork_Op<"transpose"> {
+    let summary = "Transpose a tensor along specified indices";
+    let description = [{
+        Transposes a tensor along specified indices and returns a new tensor.
+        The idea is that the indices are permuted such that the specified indices
+        allow for less cache misses when iterating over the tensor..
+    }];
+
+    let arguments = (ins
+        TensorWithIndicesType:.$tensor,
+        Variadic<IndexLabel>:$indices
+    );
+
+    let results = (outs
+        TensorWithIndicesType:$result
+    );
+}
+
+def AddOp : TensorNetwork_Op<"add"> {
+    let summary = "Add two tensors";
+    let description = [{
+        Adds two tensors and returns the result.
+    }];
+
+    let arguments = (ins
+        TensorWithIndicesType:$lhs,
+        TensorWithIndicesType:$rhs
+    );
+
+    let results = (outs
+        TensorWithIndicesType:$result
+    );
+}
+
+def ConcatOp : TensorNetwork_Op<"concat"> {
+    let summary = "Concatenate two tensors along specified indices";
+    let description = [{
+        Concatenates two tensors along specified indices and returns a new tensor with the remaining indices.
+    }];
+
+    let arguments = (ins
+        TensorWithIndicesType:$lhs,
+        TensorWithIndicesType:$rhs
+    );
+
+    let results = (outs
+        TensorWithIndicesType:$result
+    );
+}
+
 def TensorDeclOp : TensorNetwork_Op<"tensor_decl"> {
     let summary = "Declare a tensor with indices";
     let description = [{

@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "mlir/Dialect/ControlFlow/Transforms/BufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Target/LLVMIR/Dialect/All.h"
 #include "TensorNetwork/MLIRGen.h"
 #include "TensorNetwork/Passes.h"
@@ -147,6 +149,8 @@ public:
         mlir::tensor::registerBufferizableOpInterfaceExternalModels(registry);
         mlir::bufferization::func_ext::registerBufferizableOpInterfaceExternalModels(
             registry);
+        mlir::scf::registerBufferizableOpInterfaceExternalModels(registry);
+        mlir::cf::registerBufferizableOpInterfaceExternalModels(registry);
         mlir::registerBuiltinDialectTranslation(registry);
         mlir::registerLLVMDialectTranslation(registry);
         ctx_ = std::make_unique<mlir::MLIRContext>(registry);
@@ -326,25 +330,43 @@ public:
             tensorValues.push_back(const_cast<OperationWrapper&>(tensor).get()->getResult(0));
         }
 
-        // Determine the result type
         auto firstTensorType = tensorValues[0].getType().cast<mlir::tensor_network::TensorWithIndicesType>();
-        auto resultTensorType = firstTensorType.getTensorType();
-        //TODO: Change this, to either take some placeholder or actually compute the result type
-        auto resultIndices = firstTensorType.getIndices();
 
-        // Calculate the shape of the result tensor
-        llvm::SmallVector<int64_t, 4> resultShape;
-        for (auto index : resultIndices) {
-            auto indexType = index.cast<mlir::TypeAttr>().getValue().cast<mlir::tensor_network::IndexLabelType>();
-            resultShape.push_back(indexType.getSize().getInt());
+        // Determine all the free indices that are not shared
+        std::vector<mlir::Attribute> allIndices;
+        std::vector<mlir::Attribute> sharedIndices;
+        std::vector<mlir::Attribute> freeIndices;
+        std::vector<int64_t> resultShape;
+
+        for (const auto &tensorValue : tensorValues) {
+            auto tensorType = tensorValue.getType().cast<mlir::tensor_network::TensorWithIndicesType>();
+            auto indices = tensorType.getIndices();
+            for (auto index : indices) {
+                if (std::find(allIndices.begin(), allIndices.end(), index) != allIndices.end()) {
+                    if (std::find(sharedIndices.begin(), sharedIndices.end(), index) == sharedIndices.end()) {
+                        sharedIndices.push_back(index);
+                    }
+                } else {
+                    allIndices.push_back(index);
+                }
+            }
         }
 
-        auto resultTensorTypeWithShape = mlir::RankedTensorType::get(resultShape, resultTensorType.cast<mlir::ShapedType>().getElementType());
+        for (const auto &index : allIndices) {
+            if (std::find(sharedIndices.begin(), sharedIndices.end(), index) == sharedIndices.end()) {
+                freeIndices.push_back(index);
+                auto indexType = index.cast<mlir::TypeAttr>().getValue().cast<mlir::tensor_network::IndexLabelType>();
+                resultShape.push_back(indexType.getSize().getInt());
+            }
+        }
+
+        auto elementType = firstTensorType.getTensorType().cast<mlir::ShapedType>().getElementType();
+        auto resultTensorTypeWithShape = mlir::RankedTensorType::get(resultShape, elementType);
 
         auto resultType = mlir::tensor_network::TensorWithIndicesType::get(
             builder_->getContext(), 
             resultTensorTypeWithShape, 
-            builder_->getArrayAttr(resultIndices));
+            builder_->getArrayAttr(freeIndices));
 
         return builder_->create<mlir::tensor_network::ContractMultipleTensorsOp>(
             builder_->getUnknownLoc(),
@@ -375,7 +397,6 @@ public:
 
         // Get the shape and element type
         auto shape = shapedType.getShape();
-        auto elementType = shapedType.getElementType();
 
         // Calculate total size
         int64_t totalSize = 1;
@@ -466,25 +487,23 @@ private:
 
         pm.addPass(mlir::createConvertTensorToLinalgPass());
 
-        // Bufferization
         mlir::bufferization::OneShotBufferizationOptions bufferizationOptions;
         bufferizationOptions.bufferizeFunctionBoundaries = true;
-        pm.addPass(
-            mlir::bufferization::createOneShotBufferizePass(bufferizationOptions));
+        pm.addPass(mlir::bufferization::createOneShotBufferizePass(bufferizationOptions));
 
-        pm.addPass(mlir::createLinalgBufferizePass());
         pm.addPass(mlir::createConvertLinalgToLoopsPass());
         pm.addPass(mlir::createLowerAffinePass());
         pm.addPass(mlir::createConvertSCFToCFPass());
-        pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
         pm.addPass(mlir::createConvertControlFlowToLLVMPass());
         pm.addPass(mlir::createConvertFuncToLLVMPass());
         pm.addPass(mlir::createArithToLLVMConversionPass());
         pm.addPass(mlir::createConvertMathToLLVMPass());
         pm.addPass(mlir::createConvertIndexToLLVMPass());
         pm.addPass(mlir::createConvertVectorToLLVMPass());
-
+        pm.addPass(mlir::memref::createExpandStridedMetadataPass());
+        pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
         pm.addPass(mlir::createReconcileUnrealizedCastsPass());
+
         return pm.run(module_);
     }
 };

@@ -1,5 +1,6 @@
 #include "TensorNetwork/Passes.h"
 #include "TensorNetwork/TensorNetworkDialect.h"
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Verifier.h"
 #include "TensorNetwork/TensorNetworkOps.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -308,7 +309,362 @@ private:
 };
 
 
-struct ContractMultipleTensorsOpLowering : public OpRewritePattern<tensor_network::ContractMultipleTensorsOp> {
+struct AddOpLowering : public OpRewritePattern<tensor_network::AddOp> {
+    using OpRewritePattern<tensor_network::AddOp>::OpRewritePattern;
+
+    LogicalResult matchAndRewrite(tensor_network::AddOp op,
+                                  PatternRewriter &rewriter) const final {
+        Value lhs = op.getLhs();
+        Value rhs = op.getRhs();
+
+        if (!lhs.getDefiningOp<tensor_network::TensorFromValueOp>() || !rhs.getDefiningOp<tensor_network::TensorFromValueOp>()) {
+            return failure();
+        }
+
+        auto lhsType = lhs.getType().dyn_cast<tensor_network::TensorWithIndicesType>();
+        auto rhsType = rhs.getType().dyn_cast<tensor_network::TensorWithIndicesType>();
+
+        if (!lhsType || !rhsType) {
+            return failure();
+        }
+
+        auto lhsIndices = lhsType.getIndices();
+        auto rhsIndices = rhsType.getIndices();
+
+        // Check if indices match exactly
+        if (lhsIndices != rhsIndices) {
+            return failure();
+        }
+
+        // Check if dimensions match
+        auto lhsTensorType = lhsType.getTensorType().dyn_cast<RankedTensorType>();
+        auto rhsTensorType = rhsType.getTensorType().dyn_cast<RankedTensorType>();
+        if (!lhsTensorType || !rhsTensorType || lhsTensorType.getShape() != rhsTensorType.getShape()) {
+            return failure();
+        }
+
+        // Extract the underlying tensors
+        Value lhsTensor = lhs.getDefiningOp<tensor_network::TensorFromValueOp>().getOperand();
+        Value rhsTensor = rhs.getDefiningOp<tensor_network::TensorFromValueOp>().getOperand();
+
+        // Perform addition using linalg::GenericOp
+        auto resultTensor = addTensors(rewriter, lhsTensor, rhsTensor);
+
+        // Wrap the result in a TensorFromValueOp
+        auto resultType = tensor_network::TensorWithIndicesType::get(
+            rewriter.getContext(), 
+            resultTensor.getType(), 
+            lhsType.getIndices());
+        auto result = rewriter.create<tensor_network::TensorFromValueOp>(
+            op.getLoc(), resultType, resultTensor);
+
+        rewriter.replaceOp(op, result.getResult());
+        return success();
+    }
+
+private:
+    // Helper function to add two tensors
+    Value addTensors(PatternRewriter &rewriter, Value lhs, Value rhs) const {
+        auto loc = lhs.getLoc();
+        auto lhsType = lhs.getType().cast<RankedTensorType>();
+        auto resultType = lhsType;
+
+        // Create a zero-initialized output tensor
+        Value zeroTensor = rewriter.create<arith::ConstantOp>(
+            loc, resultType, rewriter.getZeroAttr(resultType));
+
+        auto genericOp = rewriter.create<linalg::GenericOp>(
+            loc,
+            TypeRange{resultType},
+            ValueRange{lhs, rhs},
+            ValueRange{zeroTensor},
+            ArrayRef<AffineMap>{
+                rewriter.getMultiDimIdentityMap(lhsType.getRank()),
+                rewriter.getMultiDimIdentityMap(lhsType.getRank()),
+                rewriter.getMultiDimIdentityMap(lhsType.getRank())
+            },
+            getNParallelLoopsAttrs(lhsType.getRank()),
+            [&](OpBuilder &nestedBuilder, Location nestedLoc, ValueRange args) {
+                Value add = nestedBuilder.create<arith::AddFOp>(nestedLoc, args[0], args[1]);
+                nestedBuilder.create<linalg::YieldOp>(nestedLoc, add);
+            }
+        );
+
+        return genericOp.getResult(0);
+    }
+
+    // Helper function to get N parallel loops attribute
+    SmallVector<utils::IteratorType, 4> getNParallelLoopsAttrs(unsigned nLoops) const {
+        return SmallVector<utils::IteratorType, 4>(nLoops, utils::IteratorType::parallel);
+    }
+};
+
+struct ContractMultipleTensorsOpSlicing : public OpRewritePattern<tensor_network::ContractMultipleTensorsOp> {
+    using OpRewritePattern<tensor_network::ContractMultipleTensorsOp>::OpRewritePattern;
+
+    LogicalResult matchAndRewrite(tensor_network::ContractMultipleTensorsOp op,
+                                  PatternRewriter &rewriter) const final {
+
+        if (op->hasAttr("sliced")) {
+            return failure();
+        }
+
+        tensor_network::IndexLabelType indexToSlice = getIndexToSlice(op);
+
+        int64_t indexSize = indexToSlice.getSize().getInt();
+        int64_t numberOfSlices = 2;
+        std::vector<int64_t> sliceSizes;
+        std::vector<int64_t> sliceOffsets;
+
+        // Calculate slice sizes and offsets
+        int64_t baseSliceSize = indexSize / numberOfSlices;
+        int64_t remainder = indexSize % numberOfSlices;
+        int64_t currentOffset = 0;
+        for (int i = 0; i < numberOfSlices; ++i) {
+            int64_t sliceSize = baseSliceSize + (i < remainder ? 1 : 0);
+            sliceSizes.push_back(sliceSize);
+            sliceOffsets.push_back(currentOffset);
+            currentOffset += sliceSize;
+
+            llvm::errs() << "Slice " << i << ": size = " << sliceSize << ", offset = " << sliceOffsets[i] << "\n";
+        }
+
+        std::vector<mlir::Value> tensorsToSlice;
+        for (auto tensor : op.getTensors()) {
+            auto tensorType = tensor.getType().cast<tensor_network::TensorWithIndicesType>();
+            auto tensorIndices = tensorType.getIndices();
+            for (auto index : tensorIndices) {
+                if (index.cast<TypeAttr>().getValue().cast<tensor_network::IndexLabelType>() == indexToSlice) {
+                    tensorsToSlice.push_back(tensor);
+                    llvm::errs() << "Tensor to slice: " << tensor << "\n";
+                    break;
+                }
+            }
+        }
+
+        // Lower tensors to constant form if necessary
+        for (auto& tensor : tensorsToSlice) {
+            if (auto tensorOp = tensor.getDefiningOp<tensor_network::TensorOp>()) {
+                auto valuesAttr = tensorOp.getValue();
+                auto tensorType = tensorOp.getType().cast<tensor_network::TensorWithIndicesType>().getTensorType();
+                auto constOp = rewriter.create<arith::ConstantOp>(tensorOp.getLoc(), tensorType, valuesAttr);
+
+                auto tensorFromValueOp = rewriter.create<tensor_network::TensorFromValueOp>(
+                    tensorOp.getLoc(), tensorOp.getType(), constOp);
+
+                rewriter.replaceOp(tensorOp, tensorFromValueOp.getResult());
+                tensor = tensorFromValueOp.getResult();
+            }
+        }
+
+        // Create new indices for each slice
+        std::vector<tensor_network::IndexLabelType> newIndices;
+        for (int i = 0; i < numberOfSlices; i++) {
+            auto newIndexNameAttr = rewriter.getStringAttr(indexToSlice.getName().str() + "_slice_" + std::to_string(i));
+            auto sizeAttr = rewriter.getI64IntegerAttr(sliceSizes[i]);
+
+            auto newIndexLabelType = tensor_network::IndexLabelType::get(rewriter.getContext(), sizeAttr, newIndexNameAttr);
+            newIndices.push_back(newIndexLabelType);
+        }
+
+        std::vector<std::vector<mlir::Value>> slicedTensors(numberOfSlices);
+        for (auto tensor : tensorsToSlice) {
+            auto tensorType = tensor.getType().cast<tensor_network::TensorWithIndicesType>();
+            auto tensorIndices = tensorType.getIndices();
+
+            size_t slicePos = 0;
+            for (; slicePos < tensorIndices.size(); ++slicePos) {
+                if (tensorIndices[slicePos].cast<TypeAttr>().getValue().cast<tensor_network::IndexLabelType>() == indexToSlice) {
+                    break;
+                }
+            }
+
+            for (int i = 0; i < numberOfSlices; i++) {
+                std::vector<mlir::Attribute> newIndicesAttr;
+                SmallVector<int64_t, 4> newShape;
+                for (size_t j = 0; j < tensorIndices.size(); ++j) {
+                    auto indexLabelType = tensorIndices[j].cast<TypeAttr>().getValue().cast<tensor_network::IndexLabelType>();
+                    if (indexLabelType == indexToSlice) {
+                        newIndicesAttr.push_back(mlir::TypeAttr::get(newIndices[i]));
+                        newShape.push_back(newIndices[i].getSize().getInt());
+                    } else {
+                        newIndicesAttr.push_back(tensorIndices[j]);
+                        newShape.push_back(indexLabelType.getSize().getInt());
+                    }
+                }
+
+                auto elementType = tensorType.getTensorType().cast<ShapedType>().getElementType();
+                auto newTensorType = RankedTensorType::get(newShape, elementType);
+                auto newTensorWithIndicesType = tensor_network::TensorWithIndicesType::get(
+                    rewriter.getContext(), 
+                    newTensorType, 
+                    rewriter.getArrayAttr(newIndicesAttr));
+
+                SmallVector<OpFoldResult, 4> offsets(tensorIndices.size(), rewriter.getIndexAttr(0));
+                SmallVector<OpFoldResult, 4> sizes;
+                for (size_t j = 0; j < tensorIndices.size(); ++j) {
+                    if (j == slicePos) {
+                        offsets[j] = rewriter.getIndexAttr(sliceOffsets[i]);
+                        sizes.push_back(rewriter.getIndexAttr(sliceSizes[i]));
+                    } else {
+                        sizes.push_back(rewriter.getIndexAttr(
+                            tensorIndices[j].cast<TypeAttr>().getValue().cast<tensor_network::IndexLabelType>().getSize().getInt()));
+                    }
+                }
+
+                auto slicedTensorValue = rewriter.create<tensor::ExtractSliceOp>(
+                    op.getLoc(), 
+                    newTensorType,
+                    tensor.getDefiningOp()->getOperand(0), 
+                    offsets, 
+                    sizes, 
+                    SmallVector<OpFoldResult, 4>(tensorIndices.size(), rewriter.getIndexAttr(1)));
+
+                llvm::errs() << "Sliced tensor " << i << ": " << slicedTensorValue << "\n";
+
+                auto slicedTensor = rewriter.create<tensor_network::TensorFromValueOp>(
+                    op.getLoc(), newTensorWithIndicesType, slicedTensorValue);
+
+                slicedTensors[i].push_back(slicedTensor);
+            }
+        }
+
+
+
+        // Now, let's create a parallel region to compute each slice independently
+        Value lowerBound = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+        Value upperBound = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), numberOfSlices);
+        Value step = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+        auto parallelOp = rewriter.create<scf::ParallelOp>(
+            op.getLoc(),
+            ValueRange{lowerBound},
+            ValueRange{upperBound},
+            ValueRange{step},
+            [&](OpBuilder &nestedBuilder, Location loc, ValueRange ivs) {
+                llvm::errs() << "Entering parallel loop iteration with iv = " << ivs[0] << "\n";
+                Value i = ivs[0];  // The loop index representing the slice number
+
+                Value sliceIdx = indexToIntOp.getResult();
+
+
+                llvm::errs() << "Processing sliceIdx: " << sliceIdx << "\n";
+
+                SmallVector<Value, 4> tensorsForSlice;
+                for (const auto& slicedTensor : slicedTensors[sliceIdx]) {
+                    tensorsForSlice.push_back(slicedTensor);
+                }
+
+                // Add tensors that are not being sliced
+                for (auto tensor : op.getTensors()) {
+                    if (std::find(tensorsToSlice.begin(), tensorsToSlice.end(), tensor) == tensorsToSlice.end()) {
+                        tensorsForSlice.push_back(tensor);
+                    }
+                }
+
+                // Create a new tensor contraction operation for this slice
+                auto newOp = nestedBuilder.create<tensor_network::ContractMultipleTensorsOp>(
+                    loc,
+                    op.getType(),
+                    tensorsForSlice
+                );
+
+                newOp->setAttr("sliced", nestedBuilder.getUnitAttr());
+                nestedBuilder.create<scf::YieldOp>(loc, newOp.getResult());
+
+                llvm::errs() << "Finished parallel iteration for sliceIdx: " << sliceIdx << "\n";
+            }
+        );
+
+        auto isSharedIndex = tensorsToSlice.size() > 1;
+
+        // Summing results from each slice in parallel
+        if (isSharedIndex) {
+            Value summedResult = sumResults(rewriter, op, parallelOp.getResults(), indexToSlice);
+            rewriter.replaceOp(op, summedResult);
+        } else {
+            return failure();
+        }
+
+        return success();
+    }
+
+private:
+    Value extractTensorValue(PatternRewriter &rewriter, Value v) const {
+        if (auto tensorFromValueOp = v.getDefiningOp<tensor_network::TensorFromValueOp>()) {
+            return tensorFromValueOp.getOperand();
+        }
+
+        llvm::errs() << "Invalid tensor value\n";
+        return nullptr;
+    }
+
+    // Value sumResults(PatternRewriter &rewriter, tensor_network::ContractMultipleTensorsOp op, 
+    //                  const std::vector<Operation*> &newOps,
+    //                  tensor_network::IndexLabelType slicedIndex) const {
+    //     auto loc = op.getLoc();
+    //     Value sumResult = newOps[0]->getResult(0);
+    //     auto resultType = sumResult.getType().cast<tensor_network::TensorWithIndicesType>();
+    //
+    //     for (size_t i = 1; i < newOps.size(); ++i) {
+    //         sumResult = rewriter.create<tensor_network::AddOp>(
+    //             loc,
+    //             resultType,
+    //             sumResult,
+    //             newOps[i]->getResult(0)
+    //         );
+    //     }
+    //
+    //     return sumResult;
+    // }
+    Value sumResults(PatternRewriter &rewriter, tensor_network::ContractMultipleTensorsOp op, 
+                     ValueRange parallelResults,
+                     tensor_network::IndexLabelType slicedIndex) const {
+        auto loc = op.getLoc();
+        Value sumResult = parallelResults[0];
+        auto resultType = sumResult.getType().cast<tensor_network::TensorWithIndicesType>();
+
+        for (size_t i = 1; i < parallelResults.size(); ++i) {
+            sumResult = rewriter.create<tensor_network::AddOp>(
+                loc,
+                resultType,
+                sumResult,
+                parallelResults[i]
+            );
+        }
+
+        return sumResult;
+    }
+
+    SmallVector<utils::IteratorType, 4> getNParallelLoopsAttrs(unsigned nLoops) const {
+        return SmallVector<utils::IteratorType, 4>(nLoops, utils::IteratorType::parallel);
+    }
+
+    tensor_network::IndexLabelType getIndexToSlice(tensor_network::ContractMultipleTensorsOp op) const {
+        SmallVector<tensor_network::IndexLabelType, 4> indices;
+        for (auto tensor : op.getTensors()) {
+            auto tensorType = tensor.getType().cast<tensor_network::TensorWithIndicesType>();
+            auto tensorIndices = tensorType.getIndices();
+            for (auto index : tensorIndices) {
+                indices.push_back(index.cast<TypeAttr>().getValue().cast<tensor_network::IndexLabelType>());
+            }
+        }
+
+        tensor_network::IndexLabelType indexToSlice;
+        int64_t maxSize = 0;
+        for (auto index : indices) {
+            if (index.getSize().getInt() > maxSize) {
+                maxSize = index.getSize().getInt();
+                indexToSlice = index;
+            }
+        }
+
+        llvm::errs() << "Index To Slice: " << indexToSlice.getName() << "\n";
+
+        return indexToSlice;
+    }
+};
+
+struct ContractMultipleTensorsOpGreedy : public OpRewritePattern<tensor_network::ContractMultipleTensorsOp> {
     using OpRewritePattern<tensor_network::ContractMultipleTensorsOp>::OpRewritePattern;
 
     LogicalResult matchAndRewrite(tensor_network::ContractMultipleTensorsOp op,
@@ -322,8 +678,8 @@ struct ContractMultipleTensorsOpLowering : public OpRewritePattern<tensor_networ
             int bestI = 0, bestJ = 1;
             int64_t bestCost = std::numeric_limits<int64_t>::max();
 
-            for (int i = 0; i < tensors.size(); ++i) {
-                for (int j = i + 1; j < tensors.size(); ++j) {
+            for (size_t i = 0; i < tensors.size(); ++i) {
+                for (size_t j = i + 1; j < tensors.size(); ++j) {
                     int64_t cost = calculateContractionCost(tensors[i], tensors[j]);
                     if (cost < bestCost) {
                         bestCost = cost;
@@ -505,22 +861,36 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
         mlir::linalg::LinalgDialect, mlir::tensor::TensorDialect,
         mlir::memref::MemRefDialect, mlir::bufferization::BufferizationDialect>();
 
+    {
+        llvm::errs() << "Module before lowering:\n";
+        module.dump();
+
+        //Step -1: Slice the index
+        RewritePatternSet slicingPatterns(&getContext());
+        slicingPatterns.add<ContractMultipleTensorsOpSlicing>(&getContext());
+
+        if (failed(applyPatternsAndFoldGreedily(module, std::move(slicingPatterns)))) {
+            signalPassFailure();
+            return;
+        }
+
+        module.dump();
+    }
+
     // Step 0: Determine the contraction order of ContractMultiple
     {
-        // llvm::errs() << "Module before lowering:\n";
-        // module.dump();
 
-        // llvm::errs() << "Step 0: Determine the contraction order of ContractMultiple\n";
+        llvm::errs() << "Step 0: Determine the contraction order of ContractMultiple\n";
 
         RewritePatternSet contractionOrderPatterns(&getContext());
-        contractionOrderPatterns.add<ContractMultipleTensorsOpLowering>(&getContext());
+        contractionOrderPatterns.add<ContractMultipleTensorsOpGreedy>(&getContext());
 
         if (failed(applyPatternsAndFoldGreedily(module, std::move(contractionOrderPatterns)))) {
             signalPassFailure();
             return;
         }
 
-        // module.dump();
+        module.dump();
 
         if (failed(mlir::verify(module))) {
             llvm::errs() << "Error in module verification\n";
@@ -531,18 +901,18 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
 
     // Step 1: Apply the lowering patterns
     {
-        // llvm::errs() << "Step 1: Apply the lowering patterns\n";
+        llvm::errs() << "Step 1: Apply the lowering patterns\n";
 
         RewritePatternSet loweringPatterns(&getContext());
         loweringPatterns.add<TensorDeclOpLowering, TensorOpLowering, IndexOpLowering, 
-            ContractOpLowering>(&getContext());
+            ContractOpLowering, AddOpLowering>(&getContext());
 
         if (failed(applyPatternsAndFoldGreedily(module, std::move(loweringPatterns)))) {
             signalPassFailure();
             return;
         }
 
-        // module.dump();
+        module.dump();
 
         if (failed(mlir::verify(module))) {
             llvm::errs() << "Error in module verification\n";
@@ -563,7 +933,7 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
             return;
         }
 
-        // module.dump();
+        module.dump();
 
         if (failed(mlir::verify(module))) {
             llvm::errs() << "Error in module verification\n";
@@ -576,7 +946,7 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
 
     // Step 3: Apply the RemoveTensorFromValuesOp pattern
     {
-        // llvm::errs() << "Step 3: Apply the RemoveTensorFromValuesOp pattern\n";
+        llvm::errs() << "Step 3: Apply the RemoveTensorFromValuesOp pattern\n";
 
         RewritePatternSet removalPatterns(&getContext());
         removalPatterns.add<RemoveTensorFromValueOp>(&getContext());
@@ -586,7 +956,7 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
             return;
         }
 
-        // module.dump();
+        module.dump();
         if (failed(mlir::verify(module))) {
             llvm::errs() << "Error in module verification\n";
             signalPassFailure();

@@ -5,7 +5,7 @@ set(CMAKE_BUILD_TYPE Debug)
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g3 -O0 -fno-inline -fno-omit-frame-pointer")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -gdwarf-4 -g3")
 
-# Ensure RTTI and exceptions are enabled globally
+# Ensure RTTI and exceptions are enabled globallyset(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frtti -fexceptions")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frtti -fexceptions")
 
 # Manually specify the include directory for pybind11
@@ -88,6 +88,7 @@ target_link_libraries(tensor_network_ext PRIVATE
     MLIRVectorToLLVMPass
     MLIRExecutionEngine
     MLIRMathToLLVM
+    MLIRControlFlowTransforms
 
     pybind11::module
 )
