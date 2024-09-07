@@ -425,7 +425,7 @@ struct ContractMultipleTensorsOpSlicing : public OpRewritePattern<tensor_network
             sliceSizes.push_back(sliceSize);
             sliceOffsets.push_back(currentOffset);
             currentOffset += sliceSize;
-
+            
             llvm::errs() << "Slice " << i << ": size = " << sliceSize << ", offset = " << sliceOffsets[i] << "\n";
         }
 
@@ -442,23 +442,29 @@ struct ContractMultipleTensorsOpSlicing : public OpRewritePattern<tensor_network
             }
         }
 
-        // Lower tensors to constant form if necessary
         for (auto& tensor : tensorsToSlice) {
             if (auto tensorOp = tensor.getDefiningOp<tensor_network::TensorOp>()) {
                 auto valuesAttr = tensorOp.getValue();
                 auto tensorType = tensorOp.getType().cast<tensor_network::TensorWithIndicesType>().getTensorType();
                 auto constOp = rewriter.create<arith::ConstantOp>(tensorOp.getLoc(), tensorType, valuesAttr);
-
+                
                 auto tensorFromValueOp = rewriter.create<tensor_network::TensorFromValueOp>(
                     tensorOp.getLoc(), tensorOp.getType(), constOp);
-
+                
                 rewriter.replaceOp(tensorOp, tensorFromValueOp.getResult());
                 tensor = tensorFromValueOp.getResult();
             }
         }
 
-        // Create new indices for each slice
+        for (auto tensor : tensorsToSlice) {
+            llvm::errs() << "Tensor to slice after lowering: " << tensor << "\n";
+            llvm::errs() << "Tensor argument: " << tensor.getDefiningOp()->getOperand(0) << "\n";
+        }
+
+        bool isSharedIndex = tensorsToSlice.size() > 1;
+
         std::vector<tensor_network::IndexLabelType> newIndices;
+
         for (int i = 0; i < numberOfSlices; i++) {
             auto newIndexNameAttr = rewriter.getStringAttr(indexToSlice.getName().str() + "_slice_" + std::to_string(i));
             auto sizeAttr = rewriter.getI64IntegerAttr(sliceSizes[i]);
@@ -529,57 +535,33 @@ struct ContractMultipleTensorsOpSlicing : public OpRewritePattern<tensor_network
             }
         }
 
+        std::vector<Operation*> newOps;
 
-
-        // Now, let's create a parallel region to compute each slice independently
-        Value lowerBound = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
-        Value upperBound = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), numberOfSlices);
-        Value step = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
-        auto parallelOp = rewriter.create<scf::ParallelOp>(
-            op.getLoc(),
-            ValueRange{lowerBound},
-            ValueRange{upperBound},
-            ValueRange{step},
-            [&](OpBuilder &nestedBuilder, Location loc, ValueRange ivs) {
-                llvm::errs() << "Entering parallel loop iteration with iv = " << ivs[0] << "\n";
-                Value i = ivs[0];  // The loop index representing the slice number
-
-                Value sliceIdx = indexToIntOp.getResult();
-
-
-                llvm::errs() << "Processing sliceIdx: " << sliceIdx << "\n";
-
-                SmallVector<Value, 4> tensorsForSlice;
-                for (const auto& slicedTensor : slicedTensors[sliceIdx]) {
-                    tensorsForSlice.push_back(slicedTensor);
-                }
-
-                // Add tensors that are not being sliced
-                for (auto tensor : op.getTensors()) {
-                    if (std::find(tensorsToSlice.begin(), tensorsToSlice.end(), tensor) == tensorsToSlice.end()) {
-                        tensorsForSlice.push_back(tensor);
-                    }
-                }
-
-                // Create a new tensor contraction operation for this slice
-                auto newOp = nestedBuilder.create<tensor_network::ContractMultipleTensorsOp>(
-                    loc,
-                    op.getType(),
-                    tensorsForSlice
-                );
-
-                newOp->setAttr("sliced", nestedBuilder.getUnitAttr());
-                nestedBuilder.create<scf::YieldOp>(loc, newOp.getResult());
-
-                llvm::errs() << "Finished parallel iteration for sliceIdx: " << sliceIdx << "\n";
+        for (int i = 0; i < numberOfSlices; i++) {
+            SmallVector<Value, 4> tensorsForSlice;
+            for (const auto& slicedTensor : slicedTensors[i]) {
+                tensorsForSlice.push_back(slicedTensor);
             }
-        );
 
-        auto isSharedIndex = tensorsToSlice.size() > 1;
+            for (auto tensor : op.getTensors()) {
+                if (std::find(tensorsToSlice.begin(), tensorsToSlice.end(), tensor) == tensorsToSlice.end()) {
+                    tensorsForSlice.push_back(tensor);
+                }
+            }
 
-        // Summing results from each slice in parallel
+            auto newOp = rewriter.create<tensor_network::ContractMultipleTensorsOp>(
+                op.getLoc(),
+                op.getType(),
+                tensorsForSlice
+            );
+
+            newOp->setAttr("sliced", rewriter.getUnitAttr());
+
+            newOps.push_back(newOp);
+        }
+
         if (isSharedIndex) {
-            Value summedResult = sumResults(rewriter, op, parallelOp.getResults(), indexToSlice);
+            Value summedResult = sumResults(rewriter, op, newOps, indexToSlice);
             rewriter.replaceOp(op, summedResult);
         } else {
             return failure();
@@ -598,37 +580,19 @@ private:
         return nullptr;
     }
 
-    // Value sumResults(PatternRewriter &rewriter, tensor_network::ContractMultipleTensorsOp op, 
-    //                  const std::vector<Operation*> &newOps,
-    //                  tensor_network::IndexLabelType slicedIndex) const {
-    //     auto loc = op.getLoc();
-    //     Value sumResult = newOps[0]->getResult(0);
-    //     auto resultType = sumResult.getType().cast<tensor_network::TensorWithIndicesType>();
-    //
-    //     for (size_t i = 1; i < newOps.size(); ++i) {
-    //         sumResult = rewriter.create<tensor_network::AddOp>(
-    //             loc,
-    //             resultType,
-    //             sumResult,
-    //             newOps[i]->getResult(0)
-    //         );
-    //     }
-    //
-    //     return sumResult;
-    // }
     Value sumResults(PatternRewriter &rewriter, tensor_network::ContractMultipleTensorsOp op, 
-                     ValueRange parallelResults,
+                     const std::vector<Operation*> &newOps,
                      tensor_network::IndexLabelType slicedIndex) const {
         auto loc = op.getLoc();
-        Value sumResult = parallelResults[0];
+        Value sumResult = newOps[0]->getResult(0);
         auto resultType = sumResult.getType().cast<tensor_network::TensorWithIndicesType>();
 
-        for (size_t i = 1; i < parallelResults.size(); ++i) {
+        for (size_t i = 1; i < newOps.size(); ++i) {
             sumResult = rewriter.create<tensor_network::AddOp>(
                 loc,
                 resultType,
                 sumResult,
-                parallelResults[i]
+                newOps[i]->getResult(0)
             );
         }
 

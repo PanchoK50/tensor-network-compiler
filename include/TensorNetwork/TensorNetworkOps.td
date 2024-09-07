@@ -24,7 +24,7 @@ def TransposeOp : TensorNetwork_Op<"transpose"> {
     }];
 
     let arguments = (ins
-        TensorWithIndicesType:.$tensor,
+        TensorWithIndicesType:$tensor,
         Variadic<IndexLabel>:$indices
     );
 
