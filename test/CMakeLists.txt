@@ -52,6 +52,7 @@ target_link_libraries(test_tensor_network
     MLIRVectorToLLVMPass
     MLIRReconcileUnrealizedCasts
     MLIRMathToLLVM
+    MLIRAsyncDialect
 )
 
 target_sources(test_tensor_network 

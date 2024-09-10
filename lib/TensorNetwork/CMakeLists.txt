@@ -88,7 +88,16 @@ target_link_libraries(tensor_network_ext PRIVATE
     MLIRVectorToLLVMPass
     MLIRExecutionEngine
     MLIRMathToLLVM
+    MLIRAsyncDialect
+    MLIRAsyncToLLVM
+    MLIRAsyncTransforms
     MLIRControlFlowTransforms
+    MLIRGPUTransforms
+    MLIRConvertToLLVMPass
+    MLIRUBToLLVM
+    MLIRComplexToLLVM
+    MLIRFuncAllExtensions
+
 
     pybind11::module
 )

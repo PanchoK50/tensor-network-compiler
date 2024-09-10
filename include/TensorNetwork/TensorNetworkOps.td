@@ -116,7 +116,7 @@ def IndexOp : TensorNetwork_Op<"index", [IsolatedFromAbove, Pure]>, Results<(out
     }];
 
     let arguments = (ins I64Attr:$size, OptionalAttr<StrAttr>:$name);
-    // let results = (outs IndexLabelType:$result);
+    let results = (outs IndexLabelType:$result);
 
     let builders = [
         OpBuilder<(ins "IntegerAttr":$size), [{

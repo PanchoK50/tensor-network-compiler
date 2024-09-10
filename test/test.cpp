@@ -1,8 +1,10 @@
 #include <string>
 
-#include "TensorNetwork/MLIRGen.h"
 #include "TensorNetwork/Passes.h"
 #include "TensorNetwork/TensorNetworkDialect.h"
+#include "TensorNetwork/TensorNetworkTypes.h"
+#include "TensorNetwork/TensorNetworkOps.h"
+#include "TensorNetwork/Passes.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
@@ -62,7 +64,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 
-using namespace tensor_network;
+using namespace mlir::tensor_network;
 namespace cl = llvm::cl;
 static cl::opt<std::string>
 inputFilename(cl::Positional, cl::desc("<input tensor network file>"),

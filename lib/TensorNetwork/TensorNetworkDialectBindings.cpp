@@ -10,10 +10,16 @@
 #include <string>
 #include <vector>
 
+#include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
+#include "mlir/Dialect/Func/Extensions/AllExtensions.h"
+#include "mlir/Conversion/Passes.h"
+#include "mlir/Conversion/AsyncToLLVM/AsyncToLLVM.h"
+#include "mlir/Conversion/UBToLLVM/UBToLLVM.h"
+#include "mlir/Dialect/Async/Passes.h"
+#include "mlir/Dialect/Async/Transforms.h"
 #include "mlir/Dialect/ControlFlow/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Target/LLVMIR/Dialect/All.h"
-#include "TensorNetwork/MLIRGen.h"
 #include "TensorNetwork/Passes.h"
 #include "TensorNetwork/TensorNetworkDialect.h"
 #include "TensorNetwork/TensorNetworkOps.h"
@@ -49,6 +55,8 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Passes.h"
+#include "mlir/Dialect/Async/Passes.h"
+#include "mlir/Dialect/Async/Transforms.h"
 #include "mlir/Dialect/Linalg/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
@@ -153,6 +161,19 @@ public:
         mlir::cf::registerBufferizableOpInterfaceExternalModels(registry);
         mlir::registerBuiltinDialectTranslation(registry);
         mlir::registerLLVMDialectTranslation(registry);
+
+
+        mlir::ub::registerConvertUBToLLVMInterface(registry);
+        mlir::registerConvertMemRefToLLVMInterface(registry);
+
+        mlir::arith::registerConvertArithToLLVMInterface(registry);
+        mlir::registerConvertComplexToLLVMInterface(registry);
+        mlir::cf::registerConvertControlFlowToLLVMInterface(registry);
+        mlir::func::registerAllExtensions(registry);
+        mlir::registerConvertFuncToLLVMInterface(registry);
+        mlir::index::registerConvertIndexToLLVMInterface(registry);
+        mlir::registerConvertMathToLLVMInterface(registry);
+
         ctx_ = std::make_unique<mlir::MLIRContext>(registry);
 
         // ctx_ = std::make_unique<mlir::MLIRContext>();
@@ -163,6 +184,7 @@ public:
         ctx_->getOrLoadDialect<mlir::bufferization::BufferizationDialect>();
         ctx_->getOrLoadDialect<mlir::memref::MemRefDialect>();
         ctx_->getOrLoadDialect<mlir::scf::SCFDialect>();
+        ctx_->getOrLoadDialect<mlir::async::AsyncDialect>();
 
         builder_ = std::make_unique<mlir::OpBuilder>(ctx_.get());
         module_ = mlir::ModuleOp::create(builder_->getUnknownLoc());
@@ -484,7 +506,46 @@ private:
 
     mlir::LogicalResult lowerModuleToLLVM() {
         mlir::PassManager pm(ctx_.get());
+        // llvm::DebugFlag = true;
 
+        // pm.addPass(mlir::createConvertTensorToLinalgPass());
+        // pm.addNestedPass<mlir::func::FuncOp>(mlir::createConvertVectorToSCFPass());
+        // pm.addNestedPass<mlir::func::FuncOp>(mlir::createConvertLinalgToLoopsPass());
+        //
+        // mlir::bufferization::OneShotBufferizationOptions bufferizationOptions;
+        // bufferizationOptions.bufferizeFunctionBoundaries = true;
+        // pm.addPass(mlir::bufferization::createOneShotBufferizePass(bufferizationOptions));
+        //
+        //
+        // pm.addPass(mlir::createAsyncToAsyncRuntimePass());
+        // pm.addPass(mlir::createAsyncFuncToAsyncRuntimePass());
+        // // pm.addPass(mlir::createAsyncRuntimeRefCountingPass());
+        // pm.addPass(mlir::createAsyncRuntimeRefCountingOptPass());
+        // // pm.addPass(mlir::createAsyncRuntimePolicyBasedRefCountingPass());
+        //
+        // pm.addPass(mlir::createLowerAffinePass());
+        // pm.addPass(mlir::createConvertSCFToCFPass());
+        // pm.addPass(mlir::createConvertLinalgToLoopsPass());
+        //
+        // pm.addPass(mlir::createConvertVectorToLLVMPass());
+        // pm.addPass(mlir::createConvertMathToLLVMPass());
+        // pm.addNestedPass<mlir::func::FuncOp>(mlir::createConvertMathToLLVMPass());
+        //
+        //
+        // pm.addPass(mlir::createConvertControlFlowToLLVMPass());
+        // pm.addPass(mlir::createArithToLLVMConversionPass());
+        // pm.addPass(mlir::createConvertIndexToLLVMPass());
+        // pm.addPass(mlir::memref::createExpandStridedMetadataPass());
+        //
+        //
+        // pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
+        // pm.addPass(mlir::createConvertAsyncToLLVMPass());
+        //
+        //
+        // pm.addPass(mlir::createConvertFuncToLLVMPass());
+        // pm.addPass(mlir::createReconcileUnrealizedCastsPass());
+        //
+        // pm.addPass(mlir::createConvertToLLVMPass());
         pm.addPass(mlir::createConvertTensorToLinalgPass());
 
         mlir::bufferization::OneShotBufferizationOptions bufferizationOptions;
@@ -503,7 +564,6 @@ private:
         pm.addPass(mlir::memref::createExpandStridedMetadataPass());
         pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
         pm.addPass(mlir::createReconcileUnrealizedCastsPass());
-
         return pm.run(module_);
     }
 };
