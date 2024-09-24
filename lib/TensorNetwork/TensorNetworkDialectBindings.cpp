@@ -398,6 +398,94 @@ public:
 
     mlir::ModuleOp getModule() { return module_; }
 
+    void compile() {
+        if (failed(lowerModule())) {
+            llvm::errs() << "Failed to lower the module\n";
+            throw std::runtime_error("Module compilation failed");
+        }
+
+        // Store shape information before lowering to LLVM
+        auto mainFunc = module_.lookupSymbol<mlir::func::FuncOp>("main");
+        if (!mainFunc) {
+            throw std::runtime_error("Main function not found");
+        }
+
+        auto returnType = mainFunc.getResultTypes()[0];
+        auto shapedType = returnType.dyn_cast<mlir::ShapedType>();
+        if (!shapedType) {
+            throw std::runtime_error("Return type is not a shaped type");
+        }
+
+        resultShape = shapedType.getShape();
+        resultElementType = shapedType.getElementType();
+
+        if (failed(lowerModuleToLLVM())) {
+            llvm::errs() << "Failed to lower the module to LLVM\n";
+            throw std::runtime_error("LLVM lowering failed");
+        }
+        isCompiled = true;
+    }
+
+    py::array run_compiled() {
+        if (!isCompiled) {
+            throw std::runtime_error("Module is not compiled. Call compile() first.");
+        }
+
+        int64_t totalSize = 1;
+        for (auto dim : resultShape) {
+            totalSize *= dim;
+        }
+
+        llvm::InitializeNativeTarget();
+        llvm::InitializeNativeTargetAsmPrinter();
+
+        mlir::ExecutionEngineOptions engineOptions;
+        engineOptions.transformer = mlir::makeOptimizingTransformer(
+            /*optLevel=*/3, /*sizeLevel=*/0, /*targetMachine=*/nullptr);
+
+        auto maybeEngine = mlir::ExecutionEngine::create(module_, engineOptions);
+        if (!maybeEngine) {
+            llvm::errs() << "Failed to create execution engine\n";
+            return py::array();
+        }
+        std::unique_ptr<mlir::ExecutionEngine> engine = std::move(maybeEngine.get());
+
+        std::vector<double> resultData(totalSize, 0.0);
+        struct MemRefDescriptor {
+            double* basePtr;
+            double* data;
+            int64_t offset;
+            int64_t* sizes;
+            int64_t* strides;
+        } result;
+
+        result.basePtr = resultData.data();
+        result.data = resultData.data();
+        result.offset = 0;
+
+        std::vector<int64_t> shapeSizes(resultShape.begin(), resultShape.end());
+        result.sizes = shapeSizes.data();
+
+        std::vector<int64_t> strideValues(resultShape.size());
+        int64_t stride = 1;
+        for (int i = resultShape.size() - 1; i >= 0; --i) {
+            strideValues[i] = stride;
+            stride *= resultShape[i];
+        }
+        result.strides = strideValues.data();
+
+        auto invocationResult = engine->invoke("main", &result);
+        if (invocationResult) {
+            llvm::errs() << "JIT invocation failed: " << invocationResult << "\n";
+            return py::array();
+        }
+
+        std::vector<ssize_t> pyShape(resultShape.begin(), resultShape.end());
+        auto resultArray = py::array_t<double>(pyShape);
+        std::memcpy(resultArray.mutable_data(), result.data, totalSize * sizeof(double));
+        return resultArray;
+    }
+
     py::array run() {
         if (failed(lowerModule())) {
             llvm::errs() << "Failed to lower the module\n";
@@ -497,6 +585,10 @@ private:
     int nextIndexId_ = 0;
     std::vector<mlir::func::FuncOp> functions_;
 
+    bool isCompiled = false;
+    mlir::ArrayRef<int64_t> resultShape;
+    mlir::Type resultElementType;
+
     mlir::LogicalResult lowerModule() {
         mlir::PassManager pm(ctx_.get());
         pm.addPass(mlir::createLocationSnapshotPass());
@@ -506,7 +598,7 @@ private:
 
     mlir::LogicalResult lowerModuleToLLVM() {
         mlir::PassManager pm(ctx_.get());
-        // llvm::DebugFlag = true;
+        // llvm::DebugFlag = "dialect-conversion";
 
         // pm.addPass(mlir::createConvertTensorToLinalgPass());
         // pm.addNestedPass<mlir::func::FuncOp>(mlir::createConvertVectorToSCFPass());
@@ -604,6 +696,8 @@ PYBIND11_MODULE(tensor_network_ext, m) {
             return OperationWrapper(self.createContractMultipleTensorsOp(tensorOps));
         })
         .def("run", [](ModuleManager &self) { return self.run(); })
+        .def("compile", &ModuleManager::compile)
+        .def("run_compiled", &ModuleManager::run_compiled)
         .def("pre_compile", [](ModuleManager &self) { return; })
         .def("load", [](ModuleManager &self, const std::string &filename) { return; });
 }

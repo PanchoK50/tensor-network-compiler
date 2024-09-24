@@ -1,9 +1,11 @@
 # Set CMP0148 policy to NEW for modern Python finding modules
 cmake_policy(SET CMP0148 NEW)
 
-set(CMAKE_BUILD_TYPE Debug)
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g3 -O0 -fno-inline -fno-omit-frame-pointer")
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -gdwarf-4 -g3")
+# set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_BUILD_TYPE Release)
+# set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g3 -O0 -fno-inline -fno-omit-frame-pointer")
+# set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -gdwarf-4 -g3")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -DNDEBUG")
 
 # Ensure RTTI and exceptions are enabled globallyset(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frtti -fexceptions")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frtti -fexceptions")
@@ -102,5 +104,8 @@ target_link_libraries(tensor_network_ext PRIVATE
     pybind11::module
 )
 
-target_compile_options(MLIRTensorNetwork PRIVATE -g3 -O0 -fno-inline -fno-omit-frame-pointer)
-target_compile_options(tensor_network_ext PRIVATE -g3 -O0 -fno-inline -fno-omit-frame-pointer)
+# target_compile_options(MLIRTensorNetwork PRIVATE -g3 -O0 -fno-inline -fno-omit-frame-pointer)
+# target_compile_options(tensor_network_ext PRIVATE -g3 -O0 -fno-inline -fno-omit-frame-pointer)
+
+target_compile_options(MLIRTensorNetwork PRIVATE -O3 -march=native -DNDEBUG)
+target_compile_options(tensor_network_ext PRIVATE -O3 -march=native -DNDEBUG)
