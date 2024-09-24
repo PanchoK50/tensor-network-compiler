@@ -398,7 +398,13 @@ public:
 
     mlir::ModuleOp getModule() { return module_; }
 
-    void compile() {
+    void compile(bool useGreedyGrayKourtis, bool enableRankSimplification, bool enableSlicing, double grayKourtisAlpha) {
+        
+        loweringOptions.contractionStrategy = useGreedyGrayKourtis ? mlir::tensor_network::ContractionStrategy::GreedyGrayKourtis : mlir::tensor_network::ContractionStrategy::Greedy;
+        loweringOptions.enableRankSimplification = enableRankSimplification;
+        loweringOptions.enableSlicing = enableSlicing;
+        loweringOptions.grayKourtisAlpha = grayKourtisAlpha;
+
         if (failed(lowerModule())) {
             llvm::errs() << "Failed to lower the module\n";
             throw std::runtime_error("Module compilation failed");
@@ -486,7 +492,14 @@ public:
         return resultArray;
     }
 
-    py::array run() {
+    py::array run(bool useGreedyGrayKourtis, bool enableRankSimplification, bool enableSlicing, double grayKourtisAlpha) {
+
+        loweringOptions.contractionStrategy = useGreedyGrayKourtis ? mlir::tensor_network::ContractionStrategy::GreedyGrayKourtis : mlir::tensor_network::ContractionStrategy::Greedy;
+        loweringOptions.enableRankSimplification = enableRankSimplification;
+        loweringOptions.enableSlicing = enableSlicing;
+        loweringOptions.grayKourtisAlpha = grayKourtisAlpha;
+
+
         if (failed(lowerModule())) {
             llvm::errs() << "Failed to lower the module\n";
             return py::array();
@@ -589,10 +602,12 @@ private:
     mlir::ArrayRef<int64_t> resultShape;
     mlir::Type resultElementType;
 
+    mlir::tensor_network::TensorNetworkNaiveLoweringOptions loweringOptions;
+
     mlir::LogicalResult lowerModule() {
         mlir::PassManager pm(ctx_.get());
         pm.addPass(mlir::createLocationSnapshotPass());
-        pm.addPass(mlir::tensor_network::createTensorNetworkNaiveLoweringPass());
+        pm.addPass(mlir::tensor_network::createTensorNetworkNaiveLoweringPass(loweringOptions));
         return pm.run(module_);
     }
 
@@ -695,8 +710,18 @@ PYBIND11_MODULE(tensor_network_ext, m) {
             }
             return OperationWrapper(self.createContractMultipleTensorsOp(tensorOps));
         })
-        .def("run", [](ModuleManager &self) { return self.run(); })
-        .def("compile", &ModuleManager::compile)
+        // .def("run", [](ModuleManager &self) { return self.run(); })
+        // .def("compile", &ModuleManager::compile)
+        .def("compile", &ModuleManager::compile,
+             py::arg("use_greedy_gray_kourtis") = false,
+             py::arg("enable_rank_simplification") = true,
+             py::arg("enable_slicing") = false,
+             py::arg("gray_kourtis_alpha") = 1.0)
+        .def("run", &ModuleManager::run,
+             py::arg("use_greedy_gray_kourtis") = false,
+             py::arg("enable_rank_simplification") = true,
+             py::arg("enable_slicing") = false,
+             py::arg("gray_kourtis_alpha") = 1.0)
         .def("run_compiled", &ModuleManager::run_compiled)
         .def("pre_compile", [](ModuleManager &self) { return; })
         .def("load", [](ModuleManager &self, const std::string &filename) { return; });

@@ -1343,6 +1343,11 @@ struct TensorNetworkNaiveLoweringPass
 : public PassWrapper<TensorNetworkNaiveLoweringPass, OperationPass<ModuleOp>> {
     MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TensorNetworkNaiveLoweringPass)
 
+    TensorNetworkNaiveLoweringPass() = default;
+    TensorNetworkNaiveLoweringPass(const mlir::tensor_network::TensorNetworkNaiveLoweringOptions &options)
+        : options(options) {}
+
+
     void getDependentDialects(DialectRegistry &registry) const override {
         registry.insert<mlir::linalg::LinalgDialect, mlir::func::FuncDialect,
             mlir::memref::MemRefDialect, mlir::arith::ArithDialect,
@@ -1354,6 +1359,8 @@ struct TensorNetworkNaiveLoweringPass
 
     void runOnOperation() final;
 
+private:
+    mlir::tensor_network::TensorNetworkNaiveLoweringOptions options;
 };
 }  // namespace
 
@@ -1382,7 +1389,10 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
         // module.dump();
     }
 
-    {
+    if (options.enableRankSimplification) {
+
+        llvm::errs() << "Applying rank simplification\n";
+
         //Apply rank simplification
         RewritePatternSet rankSimplificationPatterns(&getContext());
         rankSimplificationPatterns.add<RankSimplification>(&getContext());
@@ -1400,44 +1410,46 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
         // module.dump();
     }
 
-    // {
-    //
-    //     // llvm::errs() << "Module before lowering:\n";
-    //     // module.dump();
-    //
-    //     //Step -1: Slice the index
-    //     RewritePatternSet slicingPatterns(&getContext());
-    //     slicingPatterns.add<ContractMultipleTensorsOpSlicing>(&getContext());
-    //
-    //     if (failed(applyPatternsAndFoldGreedily(module, std::move(slicingPatterns)))) {
-    //         signalPassFailure();
-    //         return;
-    //     }
-    //
-    //     // llvm::errs() << "Module after slicing\n";
-    //     // module.dump();
-    // }
+    if (options.enableSlicing) {
+
+        llvm::errs() << "Applying slicing\n";
+        // module.dump();
+
+        //Step -1: Slice the index
+        RewritePatternSet slicingPatterns(&getContext());
+        slicingPatterns.add<ContractMultipleTensorsOpSlicing>(&getContext());
+
+        if (failed(applyPatternsAndFoldGreedily(module, std::move(slicingPatterns)))) {
+            signalPassFailure();
+            return;
+        }
+
+        // llvm::errs() << "Module after slicing\n";
+        // module.dump();
+    }
 
 
-    // {
-    //     // llvm::errs() << "Step 0: Determine the contraction order of ContractMultiple\n";
-    //
-    //     RewritePatternSet contractionOrderPatterns(&getContext());
-    //     contractionOrderPatterns.add<ContractMultipleTensorsOpGreedy>(&getContext());
-    //
-    //     if (failed(applyPatternsAndFoldGreedily(module, std::move(contractionOrderPatterns)))) {
-    //         signalPassFailure();
-    //         return;
-    //     }
-    //
-    //     // module.dump();
-    // }
-
-    {
+    if (options.contractionStrategy == mlir::tensor_network::ContractionStrategy::Greedy) {
+        llvm::errs() << "Applying Greedy contraction strategy\n";
         // llvm::errs() << "Step 0: Determine the contraction order of ContractMultiple\n";
 
         RewritePatternSet contractionOrderPatterns(&getContext());
-        contractionOrderPatterns.add<ContractMultipleTensorsOpGreedyGrayKourtis>(&getContext(), 1.0);
+        contractionOrderPatterns.add<ContractMultipleTensorsOpGreedy>(&getContext());
+
+        if (failed(applyPatternsAndFoldGreedily(module, std::move(contractionOrderPatterns)))) {
+            signalPassFailure();
+            return;
+        }
+
+        // module.dump();
+    }
+
+    if (options.contractionStrategy == mlir::tensor_network::ContractionStrategy::GreedyGrayKourtis) {
+        llvm::errs() << "Applying Greedy Gray-Kourtis contraction strategy " << options.grayKourtisAlpha << "\n";
+        // llvm::errs() << "Step 0: Determine the contraction order of ContractMultiple\n";
+
+        RewritePatternSet contractionOrderPatterns(&getContext());
+        contractionOrderPatterns.add<ContractMultipleTensorsOpGreedyGrayKourtis>(&getContext(), options.grayKourtisAlpha);
 
         if (failed(applyPatternsAndFoldGreedily(module, std::move(contractionOrderPatterns)))) {
 
@@ -1515,4 +1527,9 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
 
 std::unique_ptr<mlir::Pass> mlir::tensor_network::createTensorNetworkNaiveLoweringPass() {
     return std::make_unique<TensorNetworkNaiveLoweringPass>();
+}
+
+std::unique_ptr<mlir::Pass> mlir::tensor_network::createTensorNetworkNaiveLoweringPass(
+    const mlir::tensor_network::TensorNetworkNaiveLoweringOptions &options) {
+    return std::make_unique<TensorNetworkNaiveLoweringPass>(options);
 }
