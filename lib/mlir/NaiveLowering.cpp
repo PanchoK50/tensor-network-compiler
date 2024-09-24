@@ -455,7 +455,6 @@ struct RankSimplification : public OpRewritePattern<tensor_network::ContractMult
 
             for (size_t i = 0; i < tensors.size(); ++i) {
                 auto tensorType = tensors[i].getType().cast<tensor_network::TensorWithIndicesType>();
-                auto rank = tensorType.getTensorType().cast<RankedTensorType>().getRank();
 
                 for (size_t j = 0; j < tensors.size(); ++j) {
                     if (i == j) continue;
@@ -514,9 +513,6 @@ private:
     }
 
     Value absorbTensors(PatternRewriter &rewriter, Location loc, Value tensor1, Value tensor2) const {
-        auto type1 = tensor1.getType().cast<tensor_network::TensorWithIndicesType>();
-        auto type2 = tensor2.getType().cast<tensor_network::TensorWithIndicesType>();
-
         // Create a ContractTensorsOp to perform the absorption
         auto contractOp = rewriter.create<tensor_network::ContractTensorsOp>(
             loc, 
@@ -1064,6 +1060,95 @@ private:
     }
 };
 
+struct ContractMultipleTensorsOpGreedyGrayKourtis : public OpRewritePattern<tensor_network::ContractMultipleTensorsOp> {
+    ContractMultipleTensorsOpGreedyGrayKourtis(MLIRContext *context, double alpha = 1.0)
+        : OpRewritePattern<tensor_network::ContractMultipleTensorsOp>(context), alpha(alpha) {}
+
+    LogicalResult matchAndRewrite(tensor_network::ContractMultipleTensorsOp op,
+                                  PatternRewriter &rewriter) const override {
+        SmallVector<Value, 4> tensors(op.getTensors().begin(), op.getTensors().end());
+
+        while (tensors.size() > 1) {
+            int bestI = 0, bestJ = 1;
+            double bestCost = std::numeric_limits<double>::max();
+
+            for (size_t i = 0; i < tensors.size(); ++i) {
+                for (size_t j = i + 1; j < tensors.size(); ++j) {
+                    double cost = calculateContractionCost(tensors[i], tensors[j], rewriter);
+                    if (cost < bestCost) {
+                        bestCost = cost;
+                        bestI = i;
+                        bestJ = j;
+                    }
+                }
+            }
+
+            auto resultType = determineContractedTensorType(tensors[bestI], tensors[bestJ], rewriter);
+            auto contractOp = rewriter.create<tensor_network::ContractTensorsOp>(
+                op.getLoc(), 
+                resultType,
+                tensors[bestI], tensors[bestJ]);
+
+            tensors[bestI] = contractOp.getResult();
+            tensors.erase(tensors.begin() + bestJ);
+        }
+
+        rewriter.replaceOp(op, tensors[0]);
+        return success();
+    }
+
+private:
+    double alpha;
+
+    int64_t calculateTensorSize(const tensor_network::TensorWithIndicesType& tensorType) const {
+        auto indices = tensorType.getIndices();
+        int64_t size = 1;
+        for (auto index : indices) {
+            size *= index.cast<TypeAttr>().getValue().cast<tensor_network::IndexLabelType>().getSize().getInt();
+        }
+        return size;
+    }
+
+    double calculateContractionCost(Value lhs, Value rhs, PatternRewriter &rewriter) const {
+        auto lhsType = lhs.getType().cast<tensor_network::TensorWithIndicesType>();
+        auto rhsType = rhs.getType().cast<tensor_network::TensorWithIndicesType>();
+        
+        int64_t sizeT_i = calculateTensorSize(lhsType);
+        int64_t sizeT_j = calculateTensorSize(rhsType);
+        
+        auto resultType = determineContractedTensorType(lhs, rhs, rewriter);
+        int64_t sizeT_k = calculateTensorSize(resultType);
+
+        return static_cast<double>(sizeT_k) - alpha * (sizeT_i + sizeT_j);
+    }
+
+    tensor_network::TensorWithIndicesType determineContractedTensorType(Value lhs, Value rhs, PatternRewriter &rewriter) const {
+        auto lhsType = lhs.getType().cast<tensor_network::TensorWithIndicesType>();
+        auto rhsType = rhs.getType().cast<tensor_network::TensorWithIndicesType>();
+        auto lhsIndices = lhsType.getIndices();
+        auto rhsIndices = rhsType.getIndices();
+
+        SmallVector<mlir::Attribute> resultIndices;
+        SmallVector<int64_t> resultShape;
+
+        for (auto index : lhsIndices) {
+            if (std::find(rhsIndices.begin(), rhsIndices.end(), index) == rhsIndices.end()) {
+                resultIndices.push_back(index);
+                resultShape.push_back(index.cast<TypeAttr>().getValue().cast<tensor_network::IndexLabelType>().getSize().getInt());
+            }
+        }
+        for (auto index : rhsIndices) {
+            if (std::find(lhsIndices.begin(), lhsIndices.end(), index) == lhsIndices.end()) {
+                resultIndices.push_back(index);
+                resultShape.push_back(index.cast<TypeAttr>().getValue().cast<tensor_network::IndexLabelType>().getSize().getInt());
+            }
+        }
+
+        auto resultTensorType = RankedTensorType::get(resultShape, rewriter.getF64Type());
+        return tensor_network::TensorWithIndicesType::get(rewriter.getContext(), resultTensorType, rewriter.getArrayAttr(resultIndices));
+    }
+};
+
 struct ContractMultipleTensorsOpGreedy : public OpRewritePattern<tensor_network::ContractMultipleTensorsOp> {
     using OpRewritePattern<tensor_network::ContractMultipleTensorsOp>::OpRewritePattern;
 
@@ -1268,6 +1353,7 @@ struct TensorNetworkNaiveLoweringPass
     }
 
     void runOnOperation() final;
+
 };
 }  // namespace
 
@@ -1333,21 +1419,35 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
     // }
 
 
+    // {
+    //     // llvm::errs() << "Step 0: Determine the contraction order of ContractMultiple\n";
+    //
+    //     RewritePatternSet contractionOrderPatterns(&getContext());
+    //     contractionOrderPatterns.add<ContractMultipleTensorsOpGreedy>(&getContext());
+    //
+    //     if (failed(applyPatternsAndFoldGreedily(module, std::move(contractionOrderPatterns)))) {
+    //         signalPassFailure();
+    //         return;
+    //     }
+    //
+    //     // module.dump();
+    // }
+
     {
-
-
         // llvm::errs() << "Step 0: Determine the contraction order of ContractMultiple\n";
 
         RewritePatternSet contractionOrderPatterns(&getContext());
-        contractionOrderPatterns.add<ContractMultipleTensorsOpGreedy>(&getContext());
+        contractionOrderPatterns.add<ContractMultipleTensorsOpGreedyGrayKourtis>(&getContext(), 1.0);
 
         if (failed(applyPatternsAndFoldGreedily(module, std::move(contractionOrderPatterns)))) {
+
             signalPassFailure();
             return;
         }
 
         // module.dump();
     }
+
 
     {
         // llvm::DebugFlag = true;
