@@ -20,6 +20,7 @@ namespace mlir {
             bool enableRankSimplification = true;
             bool enableSlicing = false;
             double grayKourtisAlpha = 1.0;
+            bool enableMultithreading = false;
         };
 
 

@@ -441,6 +441,122 @@ private:
     }
 };
 
+struct RankSimplificationTrivial : public OpRewritePattern<tensor_network::ContractMultipleTensorsOp> {
+    using OpRewritePattern<tensor_network::ContractMultipleTensorsOp>::OpRewritePattern;
+
+    LogicalResult matchAndRewrite(tensor_network::ContractMultipleTensorsOp op,
+                                  PatternRewriter &rewriter) const override {
+        SmallVector<Value, 4> tensors(op.getTensors().begin(), op.getTensors().end());
+        bool changed = false;
+
+        // Iterate until no more simplifications can be made
+        while (true) {
+            bool simplificationMade = false;
+
+            for (size_t i = 0; i < tensors.size(); ++i) {
+                auto tensorType = tensors[i].getType().cast<tensor_network::TensorWithIndicesType>();
+
+                for (size_t j = 0; j < tensors.size(); ++j) {
+                    if (i == j) continue;
+                    
+                    auto tensorType2 = tensors[j].getType().cast<tensor_network::TensorWithIndicesType>();
+                    auto rank1 = tensorType.getTensorType().cast<RankedTensorType>().getRank();
+                    auto rank2 = tensorType2.getTensorType().cast<RankedTensorType>().getRank();
+
+                    if (rank1 > 2 && rank2 > 2) continue;
+
+                    if (canAbsorb(tensors[i], tensors[j])) {
+                        auto newTensor = absorbTensors(rewriter, op.getLoc(), tensors[i], tensors[j]);
+                        tensors[j] = newTensor;
+                        tensors.erase(tensors.begin() + i);
+                        simplificationMade = true;
+                        changed = true;
+                        break;
+                    }
+                }
+
+                if (simplificationMade) break;
+            }
+
+            if (!simplificationMade) break;
+        }
+
+        if (changed) {
+            // Create a new ContractMultipleTensorsOp with the simplified tensors
+            auto newOp = rewriter.create<tensor_network::ContractMultipleTensorsOp>(
+                op.getLoc(), op.getType(), tensors);
+            rewriter.replaceOp(op, newOp.getResult());
+            return success();
+        }
+
+        return failure();
+    }
+
+private:
+    bool canAbsorb(Value tensor1, Value tensor2) const {
+        auto type1 = tensor1.getType().cast<tensor_network::TensorWithIndicesType>();
+        auto type2 = tensor2.getType().cast<tensor_network::TensorWithIndicesType>();
+        auto indices1 = type1.getIndices();
+        auto indices2 = type2.getIndices();
+
+        int commonIndices = 0;
+
+        for (auto index1: indices1) {
+            if (std::find(indices2.begin(), indices2.end(), index1) != indices2.end()) {
+                commonIndices++;
+            }
+        }
+
+        if (commonIndices == 0) return false;
+
+        int rank1 = type1.getTensorType().cast<RankedTensorType>().getRank();
+        int rank2 = type2.getTensorType().cast<RankedTensorType>().getRank();
+
+        // Calculate the rank of the result if these tensors were contracted
+        int newRank = rank1 + rank2 - 2 * commonIndices;
+
+        // The absorption is allowed if the new rank is not larger than the larger of the two input ranks
+        return newRank <= std::max(rank1, rank2);
+    }
+
+    Value absorbTensors(PatternRewriter &rewriter, Location loc, Value tensor1, Value tensor2) const {
+        // Create a ContractTensorsOp to perform the absorption
+        auto contractOp = rewriter.create<tensor_network::ContractTensorsOp>(
+            loc, 
+            determineContractedTensorType(tensor1, tensor2, rewriter),
+            tensor1, tensor2);
+
+        return contractOp.getResult();
+    }
+
+    tensor_network::TensorWithIndicesType determineContractedTensorType(Value lhs, Value rhs, PatternRewriter &rewriter) const {
+        auto lhsType = lhs.getType().cast<tensor_network::TensorWithIndicesType>();
+        auto rhsType = rhs.getType().cast<tensor_network::TensorWithIndicesType>();
+        auto lhsIndices = lhsType.getIndices();
+        auto rhsIndices = rhsType.getIndices();
+
+        SmallVector<Attribute, 4> resultIndices;
+        SmallVector<int64_t, 4> resultShape;
+
+        for (auto index : lhsIndices) {
+            if (!llvm::is_contained(rhsIndices, index)) {
+                resultIndices.push_back(index);
+                resultShape.push_back(index.cast<TypeAttr>().getValue().cast<tensor_network::IndexLabelType>().getSize().getInt());
+            }
+        }
+        for (auto index : rhsIndices) {
+            if (!llvm::is_contained(lhsIndices, index)) {
+                resultIndices.push_back(index);
+                resultShape.push_back(index.cast<TypeAttr>().getValue().cast<tensor_network::IndexLabelType>().getSize().getInt());
+            }
+        }
+
+        auto resultTensorType = RankedTensorType::get(resultShape, rewriter.getF64Type());
+        return tensor_network::TensorWithIndicesType::get(rewriter.getContext(), resultTensorType, rewriter.getArrayAttr(resultIndices));
+    }
+};
+
+
 struct RankSimplification : public OpRewritePattern<tensor_network::ContractMultipleTensorsOp> {
     using OpRewritePattern<tensor_network::ContractMultipleTensorsOp>::OpRewritePattern;
 
@@ -494,8 +610,9 @@ private:
         auto indices2 = type2.getIndices();
 
         int commonIndices = 0;
-        for (auto index : indices1) {
-            if (llvm::is_contained(indices2, index)) {
+
+        for (auto index1: indices1) {
+            if (std::find(indices2.begin(), indices2.end(), index1) != indices2.end()) {
                 commonIndices++;
             }
         }
@@ -1074,6 +1191,9 @@ struct ContractMultipleTensorsOpGreedyGrayKourtis : public OpRewritePattern<tens
 
             for (size_t i = 0; i < tensors.size(); ++i) {
                 for (size_t j = i + 1; j < tensors.size(); ++j) {
+
+                    if (!canAbsorb(tensors[i], tensors[j])) continue;
+
                     double cost = calculateContractionCost(tensors[i], tensors[j], rewriter);
                     if (cost < bestCost) {
                         bestCost = cost;
@@ -1099,6 +1219,23 @@ struct ContractMultipleTensorsOpGreedyGrayKourtis : public OpRewritePattern<tens
 
 private:
     double alpha;
+
+    bool canAbsorb(Value tensor1, Value tensor2) const {
+        auto type1 = tensor1.getType().cast<tensor_network::TensorWithIndicesType>();
+        auto type2 = tensor2.getType().cast<tensor_network::TensorWithIndicesType>();
+        auto indices1 = type1.getIndices();
+        auto indices2 = type2.getIndices();
+
+        int commonIndices = 0;
+
+        for (auto index1: indices1) {
+            if (std::find(indices2.begin(), indices2.end(), index1) != indices2.end()) {
+                commonIndices++;
+            }
+        }
+
+        return commonIndices > 0;
+    }
 
     int64_t calculateTensorSize(const tensor_network::TensorWithIndicesType& tensorType) const {
         auto indices = tensorType.getIndices();
@@ -1165,6 +1302,9 @@ struct ContractMultipleTensorsOpGreedy : public OpRewritePattern<tensor_network:
 
             for (size_t i = 0; i < tensors.size(); ++i) {
                 for (size_t j = i + 1; j < tensors.size(); ++j) {
+
+                    if (!canAbsorb(tensors[i], tensors[j])) continue;
+
                     int64_t cost = calculateContractionCost(tensors[i], tensors[j]);
                     if (cost < bestCost) {
                         bestCost = cost;
@@ -1194,6 +1334,24 @@ struct ContractMultipleTensorsOpGreedy : public OpRewritePattern<tensor_network:
     }
 
 private:
+
+    bool canAbsorb(Value tensor1, Value tensor2) const {
+        auto type1 = tensor1.getType().cast<tensor_network::TensorWithIndicesType>();
+        auto type2 = tensor2.getType().cast<tensor_network::TensorWithIndicesType>();
+        auto indices1 = type1.getIndices();
+        auto indices2 = type2.getIndices();
+
+        int commonIndices = 0;
+
+        for (auto index1: indices1) {
+            if (std::find(indices2.begin(), indices2.end(), index1) != indices2.end()) {
+                commonIndices++;
+            }
+        }
+
+        return commonIndices > 0;
+    }
+
     int64_t calculateContractionCost(Value lhs, Value rhs) const {
         auto lhsType = lhs.getType().cast<tensor_network::TensorWithIndicesType>();
         auto rhsType = rhs.getType().cast<tensor_network::TensorWithIndicesType>();
@@ -1367,12 +1525,13 @@ private:
 void TensorNetworkNaiveLoweringPass::runOnOperation() {
     auto module = getOperation();
     auto *context = &getContext();
+    // llvm::DebugFlag = true; 
 
     ConversionTarget target(*context);
     target.addLegalDialect<mlir::arith::ArithDialect,
         mlir::linalg::LinalgDialect, mlir::tensor::TensorDialect,
         mlir::memref::MemRefDialect, mlir::bufferization::BufferizationDialect,
-        mlir::BuiltinDialect>();
+        mlir::BuiltinDialect, mlir::async::AsyncDialect>();
 
     {
         // module.dump();
@@ -1391,11 +1550,11 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
 
     if (options.enableRankSimplification) {
 
-        llvm::errs() << "Applying rank simplification\n";
+        // llvm::errs() << "Applying rank simplification\n";
 
         //Apply rank simplification
         RewritePatternSet rankSimplificationPatterns(&getContext());
-        rankSimplificationPatterns.add<RankSimplification>(&getContext());
+        rankSimplificationPatterns.add<RankSimplificationTrivial>(&getContext());
 
         // llvm::errs() << "Module before rank simplification:\n";
         // module.dump();
@@ -1410,9 +1569,9 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
         // module.dump();
     }
 
-    if (options.enableSlicing) {
+    if (options.enableSlicing && !options.enableMultithreading) {
 
-        llvm::errs() << "Applying slicing\n";
+        // llvm::errs() << "Applying slicing\n";
         // module.dump();
 
         //Step -1: Slice the index
@@ -1428,9 +1587,27 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
         // module.dump();
     }
 
+    if (options.enableSlicing && options.enableMultithreading) {
+
+        // llvm::errs() << "Applying slicing with multithreading\n";
+        // module.dump();
+
+        //Step -1: Slice the index
+        RewritePatternSet slicingPatterns(&getContext());
+        slicingPatterns.add<ContractMultipleTensorsOpSlicingMultithreading>(&getContext());
+
+        if (failed(applyPatternsAndFoldGreedily(module, std::move(slicingPatterns)))) {
+            signalPassFailure();
+            return;
+        }
+
+        // llvm::errs() << "Module after slicing with multithreading\n";
+        // module.dump();
+    }
+
 
     if (options.contractionStrategy == mlir::tensor_network::ContractionStrategy::Greedy) {
-        llvm::errs() << "Applying Greedy contraction strategy\n";
+        // llvm::errs() << "Applying Greedy contraction strategy\n";
         // llvm::errs() << "Step 0: Determine the contraction order of ContractMultiple\n";
 
         RewritePatternSet contractionOrderPatterns(&getContext());
@@ -1445,7 +1622,7 @@ void TensorNetworkNaiveLoweringPass::runOnOperation() {
     }
 
     if (options.contractionStrategy == mlir::tensor_network::ContractionStrategy::GreedyGrayKourtis) {
-        llvm::errs() << "Applying Greedy Gray-Kourtis contraction strategy " << options.grayKourtisAlpha << "\n";
+        // llvm::errs() << "Applying Greedy Gray-Kourtis contraction strategy " << options.grayKourtisAlpha << "\n";
         // llvm::errs() << "Step 0: Determine the contraction order of ContractMultiple\n";
 
         RewritePatternSet contractionOrderPatterns(&getContext());

@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "mlir/Dialect/Tensor/Transforms/Passes.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
 #include "mlir/Dialect/Func/Extensions/AllExtensions.h"
 #include "mlir/Conversion/Passes.h"
@@ -161,7 +162,6 @@ public:
         mlir::cf::registerBufferizableOpInterfaceExternalModels(registry);
         mlir::registerBuiltinDialectTranslation(registry);
         mlir::registerLLVMDialectTranslation(registry);
-
 
         mlir::ub::registerConvertUBToLLVMInterface(registry);
         mlir::registerConvertMemRefToLLVMInterface(registry);
@@ -492,6 +492,102 @@ public:
         return resultArray;
     }
 
+    py::array run_multithreaded() {
+        loweringOptions.contractionStrategy = mlir::tensor_network::ContractionStrategy::Greedy;
+        loweringOptions.enableRankSimplification = false;
+        loweringOptions.enableSlicing = true;
+        loweringOptions.enableMultithreading = true;
+
+        if (failed(lowerModule())) {
+            llvm::errs() << "Failed to lower the module\n";
+            return py::array();
+        }
+
+        auto mainFunc = module_.lookupSymbol<mlir::func::FuncOp>("main");
+        if (!mainFunc) {
+            llvm::errs() << "Main function not found\n";
+            return py::array();
+        }
+
+        auto returnType = mainFunc.getResultTypes()[0];
+        auto shapedType = returnType.dyn_cast<mlir::ShapedType>();
+        if (!shapedType) {
+            llvm::errs() << "Return type is not a shaped type\n";
+            return py::array();
+        }
+
+        // Get the shape and element type
+        auto shape = shapedType.getShape();
+
+        // Calculate total size
+        int64_t totalSize = 1;
+        for (auto dim : shape) {
+            totalSize *= dim;
+        }
+
+        // llvm::errs() << "Total size: " << totalSize << "\n";
+        if (failed(lowerModuleToLLVM())) {
+            llvm::errs() << "Failed to lower the module to LLVM\n";
+            return py::array();
+        }
+
+        llvm::InitializeNativeTarget();
+        llvm::InitializeNativeTargetAsmPrinter();
+
+        mlir::ExecutionEngineOptions engineOptions;
+        engineOptions.transformer = mlir::makeOptimizingTransformer(
+            /*optLevel=*/3, /*sizeLevel=*/0, /*targetMachine=*/nullptr);
+
+        auto maybeEngine = mlir::ExecutionEngine::create(module_, engineOptions);
+        if (!maybeEngine) {
+            llvm::errs() << "Failed to create execution engine\n";
+            return py::array();
+        }
+        std::unique_ptr<mlir::ExecutionEngine> engine = std::move(maybeEngine.get());
+
+        // Use a vector instead of raw pointer for automatic memory management
+        std::vector<double> resultData(totalSize, 0.0);
+
+        // Create MemRefDescriptor on the stack
+        struct MemRefDescriptor {
+            double* basePtr;
+            double* data;
+            int64_t offset;
+            int64_t* sizes;
+            int64_t* strides;
+        } result;
+
+        result.basePtr = resultData.data();
+        result.data = resultData.data();
+        result.offset = 0;
+
+        std::vector<int64_t> shapeSizes(shape.begin(), shape.end());
+        result.sizes = shapeSizes.data();
+
+        // Calculate strides
+        std::vector<int64_t> strideValues(shape.size());
+        int64_t stride = 1;
+        for (int i = shape.size() - 1; i >= 0; --i) {
+            strideValues[i] = stride;
+            stride *= shape[i];
+        }
+        result.strides = strideValues.data();
+
+        // llvm::errs() << "Invoking JIT\n";
+        auto invocationResult = engine->invoke("main", &result);
+        if (invocationResult) {
+            llvm::errs() << "JIT invocation failed: " << invocationResult << "\n";
+            return py::array();
+        }
+        // llvm::errs() << "JIT invocation succeeded\n";
+
+        // Create py::array with the correct shape
+        std::vector<ssize_t> pyShape(shape.begin(), shape.end());
+        auto resultArray = py::array_t<double>(pyShape);
+        std::memcpy(resultArray.mutable_data(), result.data, totalSize * sizeof(double));
+        return resultArray;
+    }
+
     py::array run(bool useGreedyGrayKourtis, bool enableRankSimplification, bool enableSlicing, double grayKourtisAlpha) {
 
         loweringOptions.contractionStrategy = useGreedyGrayKourtis ? mlir::tensor_network::ContractionStrategy::GreedyGrayKourtis : mlir::tensor_network::ContractionStrategy::Greedy;
@@ -605,6 +701,18 @@ private:
     mlir::tensor_network::TensorNetworkNaiveLoweringOptions loweringOptions;
 
     mlir::LogicalResult lowerModule() {
+
+        // llvm::errs() << "Lowering options are: \n";
+        // if (loweringOptions.contractionStrategy == mlir::tensor_network::ContractionStrategy::Greedy)
+        //     llvm::errs() << "Contraction strategy: Greedy\n";
+        // else
+        //     llvm::errs() << "Contraction strategy: GreedyGrayKourtis\n";
+        // llvm::errs() << "Enable rank simplification: " << loweringOptions.enableRankSimplification << "\n";
+        // llvm::errs() << "Enable slicing: " << loweringOptions.enableSlicing << "\n";
+        // llvm::errs() << "Gray-Kourtis alpha: " << loweringOptions.grayKourtisAlpha << "\n";
+        // llvm::errs() << "Enable multithreading: " << loweringOptions.enableMultithreading << "\n";
+
+
         mlir::PassManager pm(ctx_.get());
         pm.addPass(mlir::createLocationSnapshotPass());
         pm.addPass(mlir::tensor_network::createTensorNetworkNaiveLoweringPass(loweringOptions));
@@ -613,46 +721,59 @@ private:
 
     mlir::LogicalResult lowerModuleToLLVM() {
         mlir::PassManager pm(ctx_.get());
-        // llvm::DebugFlag = "dialect-conversion";
 
-        // pm.addPass(mlir::createConvertTensorToLinalgPass());
-        // pm.addNestedPass<mlir::func::FuncOp>(mlir::createConvertVectorToSCFPass());
-        // pm.addNestedPass<mlir::func::FuncOp>(mlir::createConvertLinalgToLoopsPass());
-        //
+        // // 1. Bufferize all tensor operations to memref
         // mlir::bufferization::OneShotBufferizationOptions bufferizationOptions;
         // bufferizationOptions.bufferizeFunctionBoundaries = true;
         // pm.addPass(mlir::bufferization::createOneShotBufferizePass(bufferizationOptions));
         //
+        // // 2. Canonicalize the IR for better optimization and simplification
+        // pm.addPass(mlir::createCanonicalizerPass());
         //
-        // pm.addPass(mlir::createAsyncToAsyncRuntimePass());
-        // pm.addPass(mlir::createAsyncFuncToAsyncRuntimePass());
-        // // pm.addPass(mlir::createAsyncRuntimeRefCountingPass());
-        // pm.addPass(mlir::createAsyncRuntimeRefCountingOptPass());
-        // // pm.addPass(mlir::createAsyncRuntimePolicyBasedRefCountingPass());
+        // // 3. Common subexpression elimination
+        // pm.addPass(mlir::createCSEPass());
         //
-        // pm.addPass(mlir::createLowerAffinePass());
-        // pm.addPass(mlir::createConvertSCFToCFPass());
+        // // 4. Convert Linalg operations to loops (so that they can be lowered further)
         // pm.addPass(mlir::createConvertLinalgToLoopsPass());
         //
-        // pm.addPass(mlir::createConvertVectorToLLVMPass());
-        // pm.addPass(mlir::createConvertMathToLLVMPass());
-        // pm.addNestedPass<mlir::func::FuncOp>(mlir::createConvertMathToLLVMPass());
+        // // 5. Lower affine operations to SCF (Structured Control Flow)
+        // pm.addPass(mlir::createLowerAffinePass());
         //
+        // // 6. Convert SCF operations to control flow (CF) operations
+        // pm.addPass(mlir::createConvertSCFToCFPass());
         //
+        // // 7. Convert control flow (CF) ops to LLVM dialect
         // pm.addPass(mlir::createConvertControlFlowToLLVMPass());
+        //
+        // // 8. Convert arithmetic operations to LLVM
         // pm.addPass(mlir::createArithToLLVMConversionPass());
+        //
+        // // 9. Convert math operations to LLVM
+        // pm.addPass(mlir::createConvertMathToLLVMPass());
+        //
+        // // 10. Handle index type conversion (to fit into LLVM's scalar types)
         // pm.addPass(mlir::createConvertIndexToLLVMPass());
+        //
+        // // 11. Convert vector operations to LLVM
+        // pm.addPass(mlir::createConvertVectorToLLVMPass());
+        //
+        // // 12. Expand memref strided metadata for LLVM compatibility
         // pm.addPass(mlir::memref::createExpandStridedMetadataPass());
         //
-        //
-        // pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
+        // // 13. Handle async operations: Convert async.func to async.runtime and async to LLVM
+        // pm.addPass(mlir::createAsyncFuncToAsyncRuntimePass());
+        // pm.addPass(mlir::createAsyncToAsyncRuntimePass());
         // pm.addPass(mlir::createConvertAsyncToLLVMPass());
         //
+        // // 14. Finalize memref conversion to LLVM (to handle memory references properly)
+        // pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
         //
-        // pm.addPass(mlir::createConvertFuncToLLVMPass());
+        // // 15. Clean up any unrealized casts that remain
         // pm.addPass(mlir::createReconcileUnrealizedCastsPass());
-        //
-        // pm.addPass(mlir::createConvertToLLVMPass());
+
+
+
+        
         pm.addPass(mlir::createConvertTensorToLinalgPass());
 
         mlir::bufferization::OneShotBufferizationOptions bufferizationOptions;
@@ -723,6 +844,7 @@ PYBIND11_MODULE(tensor_network_ext, m) {
              py::arg("enable_slicing") = false,
              py::arg("gray_kourtis_alpha") = 1.0)
         .def("run_compiled", &ModuleManager::run_compiled)
+        // .def("run_multithreaded", &ModuleManager::run_multithreaded)
         .def("pre_compile", [](ModuleManager &self) { return; })
         .def("load", [](ModuleManager &self, const std::string &filename) { return; });
 }
